@@ -4,12 +4,25 @@ import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+type RoomStatus = "offline" | "live" | "private";
+
+type StudioRoom = {
+  id: string;
+  title: string;
+  status: RoomStatus;
+};
+
 export default function StudioPage() {
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
+  const [activeRoom, setActiveRoom] = useState<StudioRoom | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [mutedStart, setMutedStart] = useState(false);
   const [mirrorVideo, setMirrorVideo] = useState(false);
+  const [activeTab, setActiveTab] = useState<"chat" | "gift">("chat");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showLiveSettings, setShowLiveSettings] = useState(true);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
 
@@ -35,21 +48,54 @@ export default function StudioPage() {
         } = await supabase.auth.getUser();
 
         if (userError || !user) {
-          window.location.href = "/login";
+          window.location.href = "/streamer-login";
           return;
         }
 
         setOwnerId(user.id);
 
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from("profiles")
-          .select("display_name")
+          .select("display_name, role")
           .eq("id", user.id)
           .single();
 
-        setDisplayName(profile?.display_name ?? user.email ?? "Yayıncı");
+        if (profileError) {
+          throw profileError;
+        }
+
+        const finalDisplayName = profile?.display_name ?? user.email?.split("@")[0] ?? "Yayıncı";
+        const finalRole = profile?.role ?? "viewer";
+        setDisplayName(finalDisplayName);
+        setRole(finalRole);
+
+        if (finalRole !== "streamer") {
+          return;
+        }
+
+        const { data: rooms, error: roomsError } = await supabase
+          .from("rooms")
+          .select("id, title, status, updated_at")
+          .eq("owner_id", user.id)
+          .order("updated_at", { ascending: false })
+          .limit(5);
+
+        if (roomsError) {
+          throw roomsError;
+        }
+
+        if (rooms && rooms.length > 0) {
+          const liveRoom = rooms.find((room) => room.status === "live");
+          const lastRoom = liveRoom ?? rooms[0];
+          setActiveRoom({
+            id: lastRoom.id,
+            title: lastRoom.title,
+            status: lastRoom.status as RoomStatus,
+          });
+        }
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Beklenmeyen hata oluştu.");
+        setStatus("error");
       } finally {
         setLoadingUser(false);
       }
@@ -59,9 +105,87 @@ export default function StudioPage() {
   }, []);
 
   async function handleStartLive() {
-    if (!ownerId) {
+    if (!ownerId || role !== "streamer") {
       setStatus("error");
-      setMessage("Yayın başlatmak için giriş yapmalısın.");
+      setMessage("Bu alan sadece yayıncılar içindir.");
+      return;
+    }
+
+    setStatus("loading");
+    setMessage("");
+
+    try {
+      const supabase = getSupabase();
+      const finalTitle = displayName?.trim() ? displayName : "Yayıncı";
+
+      const { data: existingRoom, error: findRoomError } = await supabase
+        .from("rooms")
+        .select("id, title, status")
+        .eq("owner_id", ownerId)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (findRoomError) {
+        throw findRoomError;
+      }
+
+      if (existingRoom) {
+        const { data: updatedRoom, error: updateRoomError } = await supabase
+          .from("rooms")
+          .update({
+            status: "live",
+            title: finalTitle,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingRoom.id)
+          .select("id, title, status")
+          .single();
+
+        if (updateRoomError || !updatedRoom) {
+          throw updateRoomError ?? new Error("Oda güncellenemedi.");
+        }
+
+        setActiveRoom({
+          id: updatedRoom.id,
+          title: updatedRoom.title,
+          status: updatedRoom.status as RoomStatus,
+        });
+      } else {
+        const { data: insertedRoom, error: insertRoomError } = await supabase
+          .from("rooms")
+          .insert({
+            owner_id: ownerId,
+            title: finalTitle,
+            status: "live",
+          })
+          .select("id, title, status")
+          .single();
+
+        if (insertRoomError || !insertedRoom) {
+          throw insertRoomError ?? new Error("Oda oluşturulamadı.");
+        }
+
+        setActiveRoom({
+          id: insertedRoom.id,
+          title: insertedRoom.title,
+          status: insertedRoom.status as RoomStatus,
+        });
+      }
+
+      setStatus("success");
+      setMessage("Yayın aktif.");
+      setShowLiveSettings(false);
+    } catch {
+      setStatus("error");
+      setMessage("Yayın başlatılamadı. Lütfen tekrar deneyin.");
+    }
+  }
+
+  async function handleStopLive() {
+    if (!ownerId || role !== "streamer") {
+      setStatus("error");
+      setMessage("Bu alan sadece yayıncılar içindir.");
       return;
     }
 
@@ -71,191 +195,444 @@ export default function StudioPage() {
     try {
       const supabase = getSupabase();
 
-      const finalTitle = `${displayName ?? "Yayıncı"} canlı yayında`;
+      const { data: liveRoom, error: liveRoomError } = await supabase
+        .from("rooms")
+        .select("id, title, status")
+        .eq("owner_id", ownerId)
+        .eq("status", "live")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      const { error } = await supabase.from("rooms").insert({
-        owner_id: ownerId,
-        title: finalTitle,
-        description: mutedStart
-          ? "Genel canlı yayın odası - ses kapalı başlatıldı"
-          : "Genel canlı yayın odası",
-        status: "live",
-        is_private: false,
-      });
+      if (liveRoomError) {
+        throw liveRoomError;
+      }
 
-      if (error) {
+      const roomIdToClose = liveRoom?.id ?? activeRoom?.id;
+
+      if (!roomIdToClose) {
         setStatus("error");
-        setMessage(error.message);
+        setMessage("Yayın kapatılamadı. Lütfen tekrar deneyin.");
         return;
       }
 
+      const { data: updatedRoom, error: closeRoomError } = await supabase
+        .from("rooms")
+        .update({
+          status: "offline",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", roomIdToClose)
+        .select("id, title, status")
+        .single();
+
+      if (closeRoomError || !updatedRoom) {
+        throw closeRoomError ?? new Error("Oda kapatılamadı.");
+      }
+
+      setActiveRoom({
+        id: updatedRoom.id,
+        title: updatedRoom.title,
+        status: updatedRoom.status as RoomStatus,
+      });
       setStatus("success");
-      setMessage("Yayın genel odada başlatıldı. Online yayıncılar ekranına yönlendiriliyorsun...");
-      window.location.href = "/rooms";
-    } catch (error) {
+      setMessage("Yayın kapatıldı.");
+    } catch {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Beklenmeyen hata oluştu.");
+      setMessage("Yayın kapatılamadı. Lütfen tekrar deneyin.");
     }
   }
 
+  async function handleSignOut() {
+    try {
+      const supabase = getSupabase();
+      await supabase.auth.signOut();
+    } finally {
+      window.location.href = "/streamer-login";
+    }
+  }
+
+  const isLive = activeRoom?.status === "live";
+  const streamTitle = activeRoom?.title || displayName || "Yayıncı";
+  const isBusy = loadingUser || status === "loading";
+  const isStreamer = role === "streamer";
+
+  useEffect(() => {
+    if (isLive) {
+      setShowLiveSettings(false);
+    } else {
+      setShowLiveSettings(true);
+    }
+  }, [isLive]);
+
   return (
-    <main className="min-h-screen bg-black text-white">
-      <header className="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-4 py-3">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="text-lg font-black tracking-tight text-white">
-            Poncik<span className="text-pink-400">Live</span>
-          </Link>
+    <main className="min-h-screen bg-[#eef7fb] text-zinc-900 lg:h-[100dvh] lg:overflow-hidden">
+      <header className="relative z-[100] h-16 border-b border-pink-100/80 bg-white/80 backdrop-blur">
+        <div className="mx-auto flex h-full max-w-[1800px] items-center justify-between px-4 sm:px-6">
+          <div className="relative z-[110] flex items-center gap-3 overflow-visible">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((prev) => !prev)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-pink-200 bg-white text-lg text-pink-500 transition hover:bg-pink-50"
+              aria-label="Menüyü aç"
+            >
+              ☰
+            </button>
+            {menuOpen ? (
+              <div className="absolute left-0 top-full mt-2 z-[9999] w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-pink-100 bg-white p-2 text-sm shadow-xl">
+                {[
+                  "Özel Oda Kazançlarım",
+                  "Genel Oda Kazançlarım",
+                  "Profil Güncelle",
+                  "Engellediklerim",
+                  "Şifre Değiştir",
+                  "Duyurular",
+                ].map((menuItem) => (
+                  <button
+                    key={menuItem}
+                    type="button"
+                    className="block w-full rounded-xl px-3 py-2 text-left text-zinc-700 transition hover:bg-pink-50"
+                  >
+                    {menuItem}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="mt-1 block w-full rounded-xl bg-rose-500/10 px-3 py-2 text-left font-semibold text-rose-600 transition hover:bg-rose-500/20"
+                >
+                  Çıkış Yap
+                </button>
+              </div>
+            ) : null}
 
-          <span className="rounded-full bg-yellow-300 px-3 py-1 text-xs font-black text-black">
-            Genel
-          </span>
-        </div>
+            <Link href="/" className="text-lg font-black tracking-tight text-zinc-900 sm:text-xl">
+              Poncik<span className="text-pink-400">Live</span>
+            </Link>
+            <span className="rounded-full bg-yellow-300 px-3 py-1 text-xs font-black text-black">Genel</span>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <Link
-            href="/rooms"
-            className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/10"
-          >
-            Online yayıncılar
-          </Link>
-          <span className="rounded-full bg-white px-4 py-2 text-sm font-black text-black">
-            0 coin
-          </span>
+          <div className="hidden items-center gap-3 md:flex">
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-bold ${
+                isLive ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-600"
+              }`}
+            >
+              {isLive ? "Yayın aktif" : "Hazır"}
+            </span>
+            <Link
+              href="/rooms"
+              className="rounded-full border border-pink-100 bg-white px-4 py-2 text-xs font-semibold transition hover:bg-pink-50"
+            >
+              Online yayıncılar
+            </Link>
+            <span className="rounded-full bg-white px-3 py-1 text-sm font-black text-zinc-900 shadow-sm">0 coin</span>
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-pink-500 font-black text-white"
+            >
+              +
+            </button>
+          </div>
         </div>
       </header>
 
-      <section className="grid min-h-[calc(100vh-57px)] grid-cols-1 lg:grid-cols-[1fr_430px]">
-        <div className="flex flex-col border-r border-emerald-500/50">
-          <div className="relative flex min-h-[520px] flex-1 items-center justify-center bg-zinc-950">
-            <div className="absolute left-4 top-4 flex items-center gap-2">
-              <span className="rounded bg-yellow-300 px-3 py-1 text-sm font-black text-black">
-                Genel
-              </span>
-              <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-300">
-                Kamera önizleme yakında
-              </span>
-            </div>
-
-            <div
-              className={`flex h-full min-h-[520px] w-full items-center justify-center bg-gradient-to-br from-zinc-950 via-black to-pink-950/20 ${
-                mirrorVideo ? "scale-x-[-1]" : ""
-              }`}
-            >
-              <div className="rounded-3xl border border-white/10 bg-black/50 p-8 text-center">
-                <p className="text-xs font-medium uppercase tracking-[0.35em] text-pink-300">
-                  Poncik Live
-                </p>
-                <h1 className="mt-4 text-3xl font-black">Yayıncı Paneli</h1>
-                <p className="mt-3 max-w-md text-sm leading-6 text-zinc-400">
-                  Kamera preview ve gerçek canlı yayın akışını bir sonraki katmanda ekleyeceğiz.
-                  Şimdilik yayın odası oluşturma, sohbet alanı ve yayıncı panel düzenini kuruyoruz.
-                </p>
+      <section className="mx-auto grid min-h-[calc(100vh-64px)] max-w-[1800px] grid-cols-1 gap-3 p-3 lg:h-[calc(100dvh-64px)] lg:min-h-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(420px,1fr)] lg:overflow-hidden lg:gap-3 lg:p-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(440px,1fr)]">
+        <div className="flex min-h-0 flex-col rounded-3xl border border-white/70 bg-white/60 p-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm lg:overflow-hidden">
+          {!loadingUser && !isStreamer ? (
+            <div className="flex flex-1 items-center justify-center p-3">
+              <div className="w-full max-w-xl rounded-3xl border border-pink-100 bg-white p-8 text-center shadow-lg">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-pink-300">PONCIK LIVE</p>
+                <h1 className="mt-3 text-2xl font-black text-zinc-900">Bu alan sadece yayıncılar içindir.</h1>
+                <p className="mt-3 text-sm text-zinc-600">Yayıncı hesabı ile giriş yapmalısın.</p>
+                <Link
+                  href="/streamer-login"
+                  className="mt-6 inline-flex rounded-full bg-pink-500 px-6 py-3 text-sm font-black text-white transition hover:bg-pink-400"
+                >
+                  Yayıncı girişine dön
+                </Link>
               </div>
             </div>
+          ) : (
+            <>
+              <div className="mb-2 flex h-10 shrink-0 items-center gap-2 rounded-2xl border border-pink-100 bg-white px-3">
+                <span className="rounded-full bg-yellow-200 px-3 py-1 text-[11px] font-black text-zinc-800">Genel</span>
+                <span className="rounded-full bg-purple-100 px-3 py-1 text-[11px] font-bold text-purple-700">
+                  Yayıncı masası
+                </span>
+                <span className="rounded-full bg-pink-100 px-3 py-1 text-[11px] font-semibold text-pink-600">Poncik tone</span>
+                {isLive ? (
+                  <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">CANLI</span>
+                ) : null}
+              </div>
 
-            <div className="absolute bottom-4 left-4 right-4 rounded-3xl bg-zinc-300/90 p-4 text-black shadow-2xl">
-              <h2 className="text-sm font-black text-white drop-shadow">Kamera Ayarları</h2>
+              <div
+                className={`relative flex min-h-0 items-center justify-center overflow-hidden rounded-3xl border border-zinc-800/70 bg-zinc-950 p-2.5 sm:p-4 ${
+                  isLive ? "flex-[1.2]" : "flex-[0.95]"
+                }`}
+              >
+                <div className="w-full max-w-[1100px]">
+                  <div
+                    className={`relative aspect-video w-full overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-zinc-950 via-black to-pink-950/40 p-4 ${
+                      mirrorVideo ? "scale-x-[-1]" : ""
+                    }`}
+                  >
+                    <div className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover" />
+                    <div className="absolute left-3 top-3 z-20 flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full px-3 py-1 text-[11px] font-bold ${
+                          isLive ? "bg-rose-500/90 text-white" : "bg-white/15 text-zinc-200"
+                        }`}
+                      >
+                        {isLive ? "Canlı yayın" : "Kamera önizleme"}
+                      </span>
+                      {isLive ? (
+                        <span className="rounded-full bg-zinc-100/90 px-3 py-1 text-[11px] font-semibold text-zinc-800">
+                          {streamTitle}
+                        </span>
+                      ) : null}
+                    </div>
 
-              <div className="mt-3 grid gap-3">
-                <label className="grid gap-1 text-sm font-semibold text-white drop-shadow sm:grid-cols-[140px_1fr] sm:items-center">
-                  Kamera
-                  <select className="rounded-full border border-black/10 bg-white px-4 py-3 text-black outline-none">
-                    <option>Kamera seçiniz</option>
-                    <option>Varsayılan kamera</option>
-                  </select>
-                </label>
+                    {!isLive ? (
+                      <div className="flex h-full items-center justify-center">
+                        <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-zinc-900/70 p-6 text-center shadow-2xl">
+                          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-pink-300">PONCIK LIVE</p>
+                          <h1 className="mt-3 text-2xl font-black text-white">Yayıncı Paneli</h1>
+                          <p className="mt-3 text-sm leading-6 text-zinc-300">
+                            Yayına çıkmadan önce kamera ve mikrofon ayarlarını yapılandır. Hazır olduğunda
+                            tek tuşla canlı yayına başla.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-center">
+                        <div className="absolute inset-0 rounded-3xl bg-[radial-gradient(circle_at_50%_30%,rgba(255,44,122,0.2),transparent_60%)]" />
+                        <div className="relative w-full max-w-2xl">
+                          <span className="inline-flex rounded-full bg-rose-500 px-5 py-1.5 text-sm font-black tracking-wide text-white shadow-lg">
+                            CANLI
+                          </span>
+                          <h2 className="mt-4 text-2xl font-black text-white sm:text-3xl">{streamTitle}</h2>
+                          <p className="mt-2 text-sm text-zinc-300">İzleyiciler seni online yayınlarda görebilir.</p>
+                        </div>
+                      </div>
+                    )}
 
-                <label className="grid gap-1 text-sm font-semibold text-white drop-shadow sm:grid-cols-[140px_1fr] sm:items-center">
-                  Mikrofon
-                  <select className="rounded-full border border-black/10 bg-white px-4 py-3 text-black outline-none">
-                    <option>Mikrofonsuz devam et</option>
-                    <option>Varsayılan mikrofon</option>
-                  </select>
-                </label>
+                  </div>
+                </div>
+              </div>
 
-                <label className="flex items-center gap-3 text-sm font-semibold text-white drop-shadow">
-                  <input
-                    type="checkbox"
-                    checked={mutedStart}
-                    onChange={(event) => setMutedStart(event.target.checked)}
-                    className="h-5 w-5"
-                  />
-                  Yayını ses kapalı olarak başlat
-                </label>
+              {isLive ? (
+                <div className="my-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-rose-100 bg-white px-3 py-2 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={handleStopLive}
+                    disabled={isBusy || !isStreamer}
+                    className="rounded-xl bg-rose-500 px-4 py-2 text-xs font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {status === "loading" ? "Yayın kapatılıyor..." : "YAYINI BİTİR"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowLiveSettings((prev) => !prev)}
+                    className="rounded-xl border border-pink-200 bg-pink-50 px-4 py-2 text-xs font-bold text-pink-700 transition hover:bg-pink-100"
+                  >
+                    {showLiveSettings ? "Kamera Ayarlarını Gizle" : "Kamera Ayarlarını Göster"}
+                  </button>
+                  {message ? (
+                    <span
+                      className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
+                        status === "success" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                      }`}
+                    >
+                      {message}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
 
-                <label className="flex items-center gap-3 text-sm font-semibold text-white drop-shadow">
-                  <input
-                    type="checkbox"
-                    checked={mirrorVideo}
-                    onChange={(event) => setMirrorVideo(event.target.checked)}
-                    className="h-5 w-5"
-                  />
-                  Video aynalama aktif/pasif
-                </label>
+              {!isLive ? (
+                <div className="my-2 shrink-0 rounded-3xl border border-pink-100 bg-white p-3 shadow-sm lg:p-4">
+                  <div className="mx-auto max-w-5xl">
+                    <h2 className="text-base font-black text-zinc-900">Kamera Ayarları</h2>
+                    <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                      <label className="grid gap-2 text-sm font-semibold text-zinc-700">
+                        Kamera
+                        <select className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-zinc-900 outline-none transition focus:border-pink-400">
+                          <option>Kamera seçiniz</option>
+                        </select>
+                      </label>
+                      <label className="grid gap-2 text-sm font-semibold text-zinc-700">
+                        Mikrofon
+                        <select className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-zinc-900 outline-none transition focus:border-pink-400">
+                          <option>Mikrofonsuz devam et</option>
+                        </select>
+                      </label>
+                    </div>
 
-                <button
-                  type="button"
-                  onClick={handleStartLive}
-                  disabled={loadingUser || status === "loading"}
-                  className="rounded-full bg-emerald-400 px-6 py-3 text-sm font-black text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {status === "loading" ? "Yayın başlatılıyor..." : "YAYINA BAŞLA"}
+                    <div className="mt-2 grid gap-2 text-sm text-zinc-700">
+                      <label className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={mutedStart}
+                          onChange={(event) => setMutedStart(event.target.checked)}
+                          className="h-4 w-4 accent-pink-500"
+                        />
+                        Yayını ses kapalı olarak başlat
+                      </label>
+                      <label className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={mirrorVideo}
+                          onChange={(event) => setMirrorVideo(event.target.checked)}
+                          className="h-4 w-4 accent-pink-500"
+                        />
+                        Video aynalama aktif/pasif
+                      </label>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleStartLive}
+                      disabled={isBusy || !isStreamer}
+                      className="mt-3 w-full rounded-2xl bg-emerald-400 px-5 py-2.5 text-sm font-black text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                    >
+                      {status === "loading" ? "Yayın başlatılıyor..." : "YAYINA BAŞLA"}
+                    </button>
+
+                    {message ? (
+                      <div
+                        className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
+                          status === "success"
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                            : "border-rose-300 bg-rose-50 text-rose-700"
+                        }`}
+                      >
+                        {message}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {isLive && showLiveSettings ? (
+                <div className="my-2 shrink-0 rounded-2xl border border-pink-100 bg-white/95 p-3 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-black text-zinc-900">Kamera Ayarları</h2>
+                    <button
+                      type="button"
+                      onClick={() => setShowLiveSettings(false)}
+                      className="rounded-full border border-zinc-200 px-3 py-1 text-xs font-bold text-zinc-600 transition hover:bg-zinc-100"
+                    >
+                      Ayarları Gizle
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <label className="grid gap-1 text-xs font-semibold text-zinc-700">
+                      Kamera
+                      <select className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-pink-400">
+                        <option>Kamera seçiniz</option>
+                      </select>
+                    </label>
+                    <label className="grid gap-1 text-xs font-semibold text-zinc-700">
+                      Mikrofon
+                      <select className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-pink-400">
+                        <option>Mikrofonsuz devam et</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="mt-3 grid gap-2 text-xs text-zinc-700 sm:grid-cols-2">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={mutedStart}
+                        onChange={(event) => setMutedStart(event.target.checked)}
+                        className="h-4 w-4 accent-pink-500"
+                      />
+                      Yayını ses kapalı başlat
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={mirrorVideo}
+                        onChange={(event) => setMirrorVideo(event.target.checked)}
+                        className="h-4 w-4 accent-pink-500"
+                      />
+                      Video aynalama aktif/pasif
+                    </label>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid h-14 shrink-0 gap-2 sm:grid-cols-3">
+                <button className="rounded-2xl bg-yellow-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
+                  CANLI DESTEK
+                </button>
+                <button className="rounded-2xl bg-orange-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
+                  HEDİYE LİSTESİ
+                </button>
+                <button className="rounded-2xl bg-pink-400 px-4 py-2 text-sm font-black text-white transition hover:bg-pink-300">
+                  MESAJLARIM
                 </button>
               </div>
+            </>
+          )}
+        </div>
 
-              {message ? (
-                <p
-                  className={`mt-3 rounded-2xl border px-4 py-3 text-sm font-semibold ${
-                    status === "success"
-                      ? "border-emerald-700 bg-emerald-100 text-emerald-900"
-                      : "border-red-700 bg-red-100 text-red-900"
-                  }`}
-                >
-                  {message}
-                </p>
-              ) : null}
+        <aside className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden">
+          <div className="flex shrink-0 border-b border-zinc-200">
+            <button
+              type="button"
+              onClick={() => setActiveTab("chat")}
+              className={`relative flex-1 py-3.5 text-sm font-black transition ${
+                activeTab === "chat" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
+              }`}
+            >
+              Sohbet
+              {activeTab === "chat" ? <span className="absolute inset-x-0 bottom-0 h-0.5 bg-pink-500" /> : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("gift")}
+              className={`relative flex-1 py-3.5 text-sm font-black transition ${
+                activeTab === "gift" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
+              }`}
+            >
+              Hediye
+              {activeTab === "gift" ? <span className="absolute inset-x-0 bottom-0 h-0.5 bg-pink-500" /> : null}
+            </button>
+          </div>
+
+          <div className="shrink-0 border-b border-zinc-200 px-6 py-3 text-center text-base font-black text-zinc-700">
+            {activeTab === "chat" ? "Odadakiler" : "Hediye Akışı"}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+              {activeTab === "chat"
+                ? "Yayın başladığında izleyiciler ve sohbet burada görünecek."
+                : "Hediye olayları burada listelenecek."}
             </div>
           </div>
 
-          <div className="grid gap-2 border-t border-white/10 bg-white/[0.03] p-2 sm:grid-cols-3">
-            <button className="rounded-full bg-yellow-400 px-4 py-3 text-sm font-black text-black">
-              CANLI DESTEK
-            </button>
-            <button className="rounded-full bg-orange-400 px-4 py-3 text-sm font-black text-white">
-              HEDİYE LİSTESİ
-            </button>
-            <button className="rounded-full bg-rose-500 px-4 py-3 text-sm font-black text-white">
-              MESAJLARIM
-            </button>
-          </div>
-        </div>
-
-        <aside className="flex min-h-[560px] flex-col bg-white text-zinc-900">
-          <div className="grid grid-cols-2 border-b border-pink-300 text-center text-pink-500">
-            <button className="border-b-2 border-pink-500 py-4 text-sm font-black">
-              Sohbet
-            </button>
-            <button className="py-4 text-sm font-black">Hediye</button>
-          </div>
-
-          <div className="border-b border-pink-300 px-5 py-4 text-center text-lg font-black text-pink-500">
-            Odadakiler
-          </div>
-
-          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-zinc-400">
-            Yayın başladığında izleyiciler, sohbet ve hediye olayları burada görünecek.
-          </div>
-
-          <div className="border-t border-zinc-200 p-3">
-            <div className="flex items-center gap-2 rounded-full bg-zinc-200 px-3 py-2">
-              <span className="rounded bg-white px-2 py-1 text-sm font-black">A-</span>
-              <span className="rounded bg-white px-2 py-1 text-sm font-black">A+</span>
+          <div className="shrink-0 border-t border-zinc-200 p-4">
+            <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
+              <button type="button" className="rounded-full bg-white px-2 py-1 text-xs font-black text-zinc-700 shadow-sm">
+                A-
+              </button>
+              <button type="button" className="rounded-full bg-white px-2 py-1 text-xs font-black text-zinc-700 shadow-sm">
+                A+
+              </button>
               <input
                 disabled
                 placeholder="Mesajınızı buraya yazınız..."
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500"
               />
-              <span className="text-2xl">🙂</span>
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-base shadow-sm"
+              >
+                🙂
+              </button>
             </div>
           </div>
         </aside>
