@@ -3,6 +3,7 @@
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { LIVE_ROOMS_BROADCAST_CHANNEL, LIVE_ROOMS_CHANGED_EVENT } from "@/lib/supabase-browser";
 
 type RoomStatus = "offline" | "live" | "private";
 
@@ -151,6 +152,19 @@ export default function StudioPage() {
           title: updatedRoom.title,
           status: updatedRoom.status as RoomStatus,
         });
+
+        try {
+          await supabase.channel(LIVE_ROOMS_BROADCAST_CHANNEL).send({
+            type: "broadcast",
+            event: LIVE_ROOMS_CHANGED_EVENT,
+            payload: {
+              action: "started",
+              roomId: updatedRoom.id,
+              status: "live",
+              at: Date.now(),
+            },
+          });
+        } catch {}
       } else {
         const { data: insertedRoom, error: insertRoomError } = await supabase
           .from("rooms")
@@ -171,6 +185,19 @@ export default function StudioPage() {
           title: insertedRoom.title,
           status: insertedRoom.status as RoomStatus,
         });
+
+        try {
+          await supabase.channel(LIVE_ROOMS_BROADCAST_CHANNEL).send({
+            type: "broadcast",
+            event: LIVE_ROOMS_CHANGED_EVENT,
+            payload: {
+              action: "started",
+              roomId: insertedRoom.id,
+              status: "live",
+              at: Date.now(),
+            },
+          });
+        } catch {}
       }
 
       setStatus("success");
@@ -235,6 +262,20 @@ export default function StudioPage() {
         title: updatedRoom.title,
         status: updatedRoom.status as RoomStatus,
       });
+
+      try {
+        await supabase.channel(LIVE_ROOMS_BROADCAST_CHANNEL).send({
+          type: "broadcast",
+          event: LIVE_ROOMS_CHANGED_EVENT,
+          payload: {
+            action: "stopped",
+            roomId: roomIdToClose,
+            status: "offline",
+            at: Date.now(),
+          },
+        });
+      } catch {}
+
       setStatus("success");
       setMessage("Yayın kapatıldı.");
     } catch {
