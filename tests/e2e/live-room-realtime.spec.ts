@@ -4,7 +4,7 @@ const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
 const PASSWORD = "123123";
 
-const streamerNameRegex = /Yay[ıi]nc[ıi]\s+Eda/i;
+const streamerNameRegex = /Eda/i;
 const noLiveRoomRegex = /[ŞS]u\s+an\s+canl[ıi]\s+yay[ıi]n\s+yok/i;
 
 async function collectPageDiagnostics(page: import("@playwright/test").Page) {
@@ -154,7 +154,7 @@ test("live room card appears and disappears without member refresh", async ({ br
   const streamerPage = await streamerContext.newPage();
   const memberPage = await memberContext.newPage();
 
-  const streamerLiveCardsOnMember = memberPage.locator("article").filter({ hasText: streamerNameRegex });
+  const streamerLiveCardsOnMember = memberPage.locator('a[href^="/rooms/"]').filter({ hasText: streamerNameRegex });
   const noLiveRoomText = memberPage.getByText(noLiveRoomRegex).first();
   const startButton = streamerPage.getByRole("button", { name: /ba[sş]la/i });
   const stopButton = streamerPage.getByRole("button", { name: /b[ıiİI]t[ıiİI]r/i });

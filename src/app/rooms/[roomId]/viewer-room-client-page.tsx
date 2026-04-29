@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchRoomPresence, type RoomPresenceUser } from "@/lib/room-presence";
 import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
@@ -33,6 +34,36 @@ function getStreamerName(room: RoomRow | null, profile: ProfileRow | null) {
   const profileName = profile?.display_name?.trim();
   const roomTitle = room?.title?.trim();
   return profileName || roomTitle || "Yayinci";
+}
+
+function getPresenceRoleLabel(role: string) {
+  if (role === "streamer") {
+    return "Yayinci";
+  }
+  if (role === "admin") {
+    return "Admin";
+  }
+  return "Izleyici";
+}
+
+function formatSeenText(lastSeenAt: string) {
+  const milliseconds = Date.now() - new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+    return "simdi";
+  }
+  const seconds = Math.floor(milliseconds / 1000);
+  if (seconds < 45) {
+    return "simdi";
+  }
+  if (seconds < 60) {
+    return `${seconds} sn once`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} dk once`;
+  }
+  const hours = Math.floor(minutes / 60);
+  return `${hours} sa once`;
 }
 
 function RoomInfoState({
@@ -83,9 +114,11 @@ export default function ViewerRoomClientPage() {
   const [chatBody, setChatBody] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isRefreshingMessages, setIsRefreshingMessages] = useState(false);
+  const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUser[]>([]);
   const messageIdsRef = useRef(new Set<string>());
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const presenceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isLive = state.room?.status === "live";
   const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending;
@@ -154,6 +187,57 @@ export default function ViewerRoomClientPage() {
     },
     [refreshMessages],
   );
+
+  const refreshPresence = useCallback(async () => {
+    if (!roomId || !isLive) {
+      setPresenceUsers([]);
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const fetchedPresence = await fetchRoomPresence(roomId, 100, supabase);
+    setPresenceUsers(fetchedPresence);
+  }, [isLive, roomId]);
+
+  const scheduleRefreshPresence = useCallback(
+    (delayMs = 120) => {
+      if (presenceRefreshTimerRef.current) {
+        clearTimeout(presenceRefreshTimerRef.current);
+      }
+      presenceRefreshTimerRef.current = setTimeout(() => {
+        void refreshPresence();
+      }, delayMs);
+    },
+    [refreshPresence],
+  );
+
+  const upsertOwnPresence = useCallback(async () => {
+    if (!roomId || !state.userId || !isLive) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    await supabase.from("room_presence").upsert(
+      {
+        room_id: roomId,
+        user_id: state.userId,
+        role: "viewer",
+        last_seen_at: new Date().toISOString(),
+      },
+      {
+        onConflict: "room_id,user_id",
+      },
+    );
+  }, [isLive, roomId, state.userId]);
+
+  const removeOwnPresence = useCallback(async () => {
+    if (!roomId || !state.userId) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    await supabase.from("room_presence").delete().eq("room_id", roomId).eq("user_id", state.userId);
+  }, [roomId, state.userId]);
 
   useEffect(() => {
     if (!roomId) {
@@ -309,6 +393,14 @@ export default function ViewerRoomClientPage() {
   }, [isLive, refreshMessages, roomId]);
 
   useEffect(() => {
+    if (!roomId || !isLive) {
+      setPresenceUsers([]);
+      return;
+    }
+    void refreshPresence();
+  }, [isLive, refreshPresence, roomId]);
+
+  useEffect(() => {
     if (!roomId) {
       return;
     }
@@ -338,6 +430,58 @@ export default function ViewerRoomClientPage() {
       void supabase.removeChannel(channel);
     };
   }, [roomId, scheduleRefreshMessages]);
+
+  useEffect(() => {
+    if (!roomId) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`public:room-presence:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_presence",
+          filter: `room_id=eq.${roomId}`,
+        },
+        () => {
+          scheduleRefreshPresence();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      if (presenceRefreshTimerRef.current) {
+        clearTimeout(presenceRefreshTimerRef.current);
+        presenceRefreshTimerRef.current = null;
+      }
+      void supabase.removeChannel(channel);
+    };
+  }, [roomId, scheduleRefreshPresence]);
+
+  useEffect(() => {
+    if (!roomId || !isLive || !state.isLoggedIn || !state.userId) {
+      return;
+    }
+
+    void upsertOwnPresence();
+    const heartbeatTimer = setInterval(() => {
+      void upsertOwnPresence();
+    }, 25000);
+    const handleBeforeUnload = () => {
+      void removeOwnPresence();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      clearInterval(heartbeatTimer);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      void removeOwnPresence();
+    };
+  }, [isLive, removeOwnPresence, roomId, state.isLoggedIn, state.userId, upsertOwnPresence]);
 
   async function handleSendMessage() {
     const trimmedBody = chatBody.trim();
@@ -513,23 +657,50 @@ export default function ViewerRoomClientPage() {
               <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
                 Hediye olaylari bir sonraki fazda aktif edilecek.
               </div>
-            ) : messages.length === 0 ? (
-              <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
-                Henuz sohbet mesaji yok.
-              </div>
             ) : (
-              <div className="space-y-3">
-                {messages.map((message) => (
-                  <article key={message.id} className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm">
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="font-bold text-pink-600">{message.senderName}</span>
-                      <span className="text-zinc-400">
-                        {new Date(message.createdAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
-                      </span>
+              <div>
+                <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
+                    <span className="rounded-full bg-pink-100 px-2.5 py-1 text-xs font-bold text-pink-700">{presenceUsers.length}</span>
+                  </div>
+                  {presenceUsers.length === 0 ? (
+                    <p className="mt-2 text-sm text-zinc-500">Aktif odadaki uye yok.</p>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      {presenceUsers.map((presenceUser) => (
+                        <article key={presenceUser.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="truncate text-sm font-semibold text-zinc-800">{presenceUser.displayName}</p>
+                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold text-zinc-700">
+                              {getPresenceRoleLabel(presenceUser.role)}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-zinc-500">Son gorulme: {formatSeenText(presenceUser.lastSeenAt)}</p>
+                        </article>
+                      ))}
                     </div>
-                    <p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-700">{message.body}</p>
-                  </article>
-                ))}
+                  )}
+                </section>
+                {messages.length === 0 ? (
+                  <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+                    Henuz sohbet mesaji yok.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {messages.map((message) => (
+                      <article key={message.id} className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-bold text-pink-600">{message.senderName}</span>
+                          <span className="text-zinc-400">
+                            {new Date(message.createdAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-700">{message.body}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

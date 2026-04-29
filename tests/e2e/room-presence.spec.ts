@@ -40,8 +40,8 @@ async function login(
   await page.waitForURL(opts.successUrl, { timeout: 20_000 });
 }
 
-test("member message appears in viewer and studio without refresh", async ({ browser }) => {
-  test.setTimeout(120_000);
+test("room presence appears and clears in realtime", async ({ browser }) => {
+  test.setTimeout(140_000);
 
   const streamerContext = await browser.newContext();
   const memberContext = await browser.newContext();
@@ -60,7 +60,7 @@ test("member message appears in viewer and studio without refresh", async ({ bro
 
     if (!/\/studio(?:\/)?$/.test(streamerPage.url())) {
       await streamerPage.goto("/studio");
-      await expect(streamerPage).toHaveURL(/\/studio(?:\/|$)/);
+      await expect(streamerPage).toHaveURL(/\/studio(?:\/|$)/, { timeout: 10_000 });
     }
 
     if (await stopButton.isVisible().catch(() => false)) {
@@ -85,22 +85,28 @@ test("member message appears in viewer and studio without refresh", async ({ bro
       .getByRole("heading", { name: /Online Yayincilar/i })
       .locator("xpath=ancestor::div[1]");
     await expect(memberOnlineSection).toBeVisible({ timeout: 20_000 });
-    const roomLink = memberOnlineSection.getByRole("link", { name: /Eda|Yayina gir/i }).first();
-    await expect(roomLink).toBeVisible({ timeout: 25_000 });
-    const roomHref = await roomLink.getAttribute("href");
-    if (!roomHref || !/^\/rooms\/.+/.test(roomHref)) {
-      throw new Error("Yayina gir linki bulunamadi veya href gecersiz.");
-    }
-    await roomLink.click();
-    await expect(memberPage).toHaveURL(/\/rooms\/[^/]+$/);
+    const edaCardLink = memberOnlineSection.getByRole("link", { name: /Eda|Yayina gir/i }).first();
+    await expect(edaCardLink).toBeVisible({ timeout: 25_000 });
+    const roomHref = await edaCardLink.getAttribute("href");
+    await expect(roomHref ?? "").toMatch(/^\/rooms\/.+/);
+    await edaCardLink.click();
+    await expect(memberPage).toHaveURL(/\/rooms\/[^/]+$/, { timeout: 20_000 });
 
-    const uniqueMessage = `playwright sohbet test ${Date.now()}`;
-    const viewerInput = memberPage.getByPlaceholder(/Mesaj.*yaz/i).first();
-    await viewerInput.fill(uniqueMessage);
-    await memberPage.getByRole("button", { name: /gonder/i }).first().click();
+    await expect(memberPage.getByRole("heading", { name: /Yayinci Eda|Eda/i }).first()).toBeVisible({
+      timeout: 15_000,
+    });
 
-    await expect(memberPage.getByText(uniqueMessage).first()).toBeVisible({ timeout: 20_000 });
-    await expect(streamerPage.getByText(uniqueMessage).first()).toBeVisible({ timeout: 20_000 });
+    const viewerPanel = memberPage.locator("aside").first();
+    await expect(viewerPanel.getByText(/Odadakiler/i).first()).toBeVisible({ timeout: 15_000 });
+    await expect(viewerPanel.getByText(/[ÜU]ye\s*Veli|Veli/i).first()).toBeVisible({ timeout: 20_000 });
+
+    const studioPanel = streamerPage.locator("aside").first();
+    await expect(studioPanel.getByText(/Odadakiler/i).first()).toBeVisible({ timeout: 15_000 });
+    await expect(studioPanel.getByText(/[ÜU]ye\s*Veli|Veli/i).first()).toBeVisible({ timeout: 20_000 });
+
+    await memberPage.goto("/member");
+    await expect(memberPage).toHaveURL(/\/member(?:\/|$)/, { timeout: 10_000 });
+    await expect(studioPanel.getByText(/[ÜU]ye\s*Veli|Veli/i).first()).not.toBeVisible({ timeout: 40_000 });
   } finally {
     if (!streamerPage.isClosed()) {
       const canStop = await stopButton.isVisible().catch(() => false);

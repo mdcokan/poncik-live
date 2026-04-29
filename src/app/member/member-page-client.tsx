@@ -114,11 +114,18 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
             <div className="mt-4 flex gap-3 overflow-x-auto">
               {featuredStreamers.length > 0 ? (
                 featuredStreamers.map((room) => (
-                  <article key={room.id} className="min-w-[160px] rounded-2xl bg-cyan-50 p-3">
+                  <Link
+                    key={room.id}
+                    href={`/rooms/${room.id}`}
+                    className="block min-w-[160px] rounded-2xl bg-cyan-50 p-3 transition hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                  >
                     <div className="h-14 w-14 rounded-full bg-gradient-to-br from-pink-300 to-violet-400" />
                     <p className="mt-3 text-sm font-semibold">{room.streamerName}</p>
                     <p className="mt-1 text-xs text-emerald-600">canli • HD</p>
-                  </article>
+                    <span className="mt-3 inline-flex rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
+                      Yayina gir
+                    </span>
+                  </Link>
                 ))
               ) : (
                 <div className="w-full rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-5 text-sm text-slate-600">
@@ -134,11 +141,18 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
             {!showEmptyState ? (
               <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                 {liveRooms.map((room) => (
-                  <article key={room.id} className="rounded-2xl bg-cyan-50 p-3">
+                  <Link
+                    key={room.id}
+                    href={`/rooms/${room.id}`}
+                    className="block rounded-2xl bg-cyan-50 p-3 transition hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                  >
                     <div className="h-16 rounded-xl bg-gradient-to-br from-indigo-300 to-pink-300" />
                     <p className="mt-3 text-sm font-semibold">{room.streamerName}</p>
                     <p className="mt-1 text-xs text-emerald-600">canli • HD</p>
-                  </article>
+                    <span className="mt-3 inline-flex rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
+                      Yayina gir
+                    </span>
+                  </Link>
                 ))}
               </div>
             ) : (

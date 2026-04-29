@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchRoomPresence, type RoomPresenceUser } from "@/lib/room-presence";
 import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
 import {
   LIVE_ROOMS_BROADCAST_CHANNEL,
@@ -16,6 +17,36 @@ type StudioRoom = {
   title: string;
   status: RoomStatus;
 };
+
+function getPresenceRoleLabel(role: string) {
+  if (role === "streamer") {
+    return "Yayinci";
+  }
+  if (role === "admin") {
+    return "Admin";
+  }
+  return "Izleyici";
+}
+
+function formatSeenText(lastSeenAt: string) {
+  const milliseconds = Date.now() - new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+    return "simdi";
+  }
+  const seconds = Math.floor(milliseconds / 1000);
+  if (seconds < 45) {
+    return "simdi";
+  }
+  if (seconds < 60) {
+    return `${seconds} sn once`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} dk once`;
+  }
+  const hours = Math.floor(minutes / 60);
+  return `${hours} sa once`;
+}
 
 export default function StudioPage() {
   const [ownerId, setOwnerId] = useState<string | null>(null);
@@ -34,6 +65,7 @@ export default function StudioPage() {
   const [chatBody, setChatBody] = useState("");
   const [chatSending, setChatSending] = useState(false);
   const [chatRefreshing, setChatRefreshing] = useState(false);
+  const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUser[]>([]);
   const [chatIdentity, setChatIdentity] = useState<{ userId: string | null; displayName: string | null }>({
     userId: null,
     displayName: null,
@@ -41,6 +73,7 @@ export default function StudioPage() {
   const roomMessagesRef = useRef<HTMLDivElement | null>(null);
   const messageIdsRef = useRef(new Set<string>());
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const presenceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function getSupabase() {
     return getSupabaseBrowserClient();
@@ -184,6 +217,57 @@ export default function StudioPage() {
     },
     [refreshMessages],
   );
+
+  const refreshPresence = useCallback(async () => {
+    if (!activeRoom?.id || activeRoom.status !== "live") {
+      setPresenceUsers([]);
+      return;
+    }
+
+    const supabase = getSupabase();
+    const fetchedPresence = await fetchRoomPresence(activeRoom.id, 100, supabase);
+    setPresenceUsers(fetchedPresence);
+  }, [activeRoom?.id, activeRoom?.status]);
+
+  const scheduleRefreshPresence = useCallback(
+    (delayMs = 120) => {
+      if (presenceRefreshTimerRef.current) {
+        clearTimeout(presenceRefreshTimerRef.current);
+      }
+      presenceRefreshTimerRef.current = setTimeout(() => {
+        void refreshPresence();
+      }, delayMs);
+    },
+    [refreshPresence],
+  );
+
+  const upsertStreamerPresence = useCallback(async () => {
+    if (!activeRoom?.id || activeRoom.status !== "live" || !ownerId) {
+      return;
+    }
+
+    const supabase = getSupabase();
+    await supabase.from("room_presence").upsert(
+      {
+        room_id: activeRoom.id,
+        user_id: ownerId,
+        role: "streamer",
+        last_seen_at: new Date().toISOString(),
+      },
+      {
+        onConflict: "room_id,user_id",
+      },
+    );
+  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+
+  const removeStreamerPresence = useCallback(async () => {
+    if (!activeRoom?.id || !ownerId) {
+      return;
+    }
+
+    const supabase = getSupabase();
+    await supabase.from("room_presence").delete().eq("room_id", activeRoom.id).eq("user_id", ownerId);
+  }, [activeRoom?.id, ownerId]);
 
   async function handleStartLive() {
     if (!ownerId || role !== "streamer") {
@@ -396,6 +480,14 @@ export default function StudioPage() {
   }, [activeRoom?.id, activeRoom?.status, refreshMessages]);
 
   useEffect(() => {
+    if (!activeRoom?.id || activeRoom.status !== "live") {
+      setPresenceUsers([]);
+      return;
+    }
+    void refreshPresence();
+  }, [activeRoom?.id, activeRoom?.status, refreshPresence]);
+
+  useEffect(() => {
     if (!activeRoom?.id) {
       return;
     }
@@ -425,6 +517,58 @@ export default function StudioPage() {
       void supabase.removeChannel(channel);
     };
   }, [activeRoom?.id, scheduleRefreshMessages]);
+
+  useEffect(() => {
+    if (!activeRoom?.id) {
+      return;
+    }
+
+    const supabase = getSupabase();
+    const channel = supabase
+      .channel(`public:room-presence:${activeRoom.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_presence",
+          filter: `room_id=eq.${activeRoom.id}`,
+        },
+        () => {
+          scheduleRefreshPresence();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      if (presenceRefreshTimerRef.current) {
+        clearTimeout(presenceRefreshTimerRef.current);
+        presenceRefreshTimerRef.current = null;
+      }
+      void supabase.removeChannel(channel);
+    };
+  }, [activeRoom?.id, scheduleRefreshPresence]);
+
+  useEffect(() => {
+    if (!activeRoom?.id || activeRoom.status !== "live" || !ownerId || role !== "streamer") {
+      return;
+    }
+
+    void upsertStreamerPresence();
+    const heartbeatTimer = setInterval(() => {
+      void upsertStreamerPresence();
+    }, 25000);
+    const handleBeforeUnload = () => {
+      void removeStreamerPresence();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      clearInterval(heartbeatTimer);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      void removeStreamerPresence();
+    };
+  }, [activeRoom?.id, activeRoom?.status, ownerId, removeStreamerPresence, role, upsertStreamerPresence]);
 
   async function handleSendChatMessage() {
     const roomId = activeRoom?.id;
@@ -820,29 +964,56 @@ export default function StudioPage() {
               <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
                 Hediye olaylari burada listelenecek.
               </div>
-            ) : roomMessages.length === 0 ? (
-              <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
-                Henuz sohbet mesaji yok.
-              </div>
             ) : (
-              <div className="space-y-3">
-                {roomMessages.map((roomMessage) => (
-                  <article
-                    key={roomMessage.id}
-                    className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm"
-                  >
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="font-bold text-pink-600">{roomMessage.senderName}</span>
-                      <span className="text-zinc-400">
-                        {new Date(roomMessage.createdAt).toLocaleTimeString("tr-TR", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
+              <div>
+                <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
+                    <span className="rounded-full bg-pink-100 px-2.5 py-1 text-xs font-bold text-pink-700">{presenceUsers.length}</span>
+                  </div>
+                  {presenceUsers.length === 0 ? (
+                    <p className="mt-2 text-sm text-zinc-500">Aktif odada izleyici yok.</p>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      {presenceUsers.map((presenceUser) => (
+                        <article key={presenceUser.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="truncate text-sm font-semibold text-zinc-800">{presenceUser.displayName}</p>
+                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold text-zinc-700">
+                              {getPresenceRoleLabel(presenceUser.role)}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-zinc-500">Son gorulme: {formatSeenText(presenceUser.lastSeenAt)}</p>
+                        </article>
+                      ))}
                     </div>
-                    <p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-700">{roomMessage.body}</p>
-                  </article>
-                ))}
+                  )}
+                </section>
+                {roomMessages.length === 0 ? (
+                  <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+                    Henuz sohbet mesaji yok.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {roomMessages.map((roomMessage) => (
+                      <article
+                        key={roomMessage.id}
+                        className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-bold text-pink-600">{roomMessage.senderName}</span>
+                          <span className="text-zinc-400">
+                            {new Date(roomMessage.createdAt).toLocaleTimeString("tr-TR", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-700">{roomMessage.body}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
