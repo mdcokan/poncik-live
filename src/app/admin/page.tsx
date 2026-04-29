@@ -1,98 +1,83 @@
 "use client";
 
-import { createClient } from "@supabase/supabase-js";
-import { useEffect, useState } from "react";
+import { AdminAccessState } from "@/app/admin/_components/admin-access-state";
+import { AdminLayout } from "@/app/admin/_components/admin-layout";
+import { useAdminAccess } from "@/app/admin/_hooks/use-admin-access";
 
-type AdminRole = "viewer" | "streamer" | "admin" | "owner";
-
-const adminCards = [
-  "Uyeler",
-  "Yayincilar",
-  "Online Odalar",
-  "Coin / Odeme",
-  "Sikayet / Ban",
-  "Duyurular",
-  "Sistem Ayarlari",
+const summaryCards = [
+  { label: "Toplam Uye", value: "12.480", note: "+120 bugun" },
+  { label: "Toplam Yayinci", value: "348", note: "42 aktif" },
+  { label: "Online Yayin", value: "27", note: "anlik takip" },
+  { label: "Bugunku Coin Hareketi", value: "89.400", note: "mock veri" },
+  { label: "Bugunku Kazanc", value: "48.250 TL", note: "mock veri" },
+  { label: "Bekleyen Sikayet", value: "14", note: "8 kritik" },
 ];
 
-function getSupabaseClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const recentActions = [
+  "Yeni yayinci basvurusu onaya alindi.",
+  "3 kullanici sikayeti inceleme kuyuguna eklendi.",
+  "Coin paketi kampanya etiketi guncellendi.",
+  "Sistem duyurusu taslaga kaydedildi.",
+  "Canli odada moderasyon uyarisi verildi.",
+];
 
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error("Supabase ortam degiskenleri eksik.");
-  }
-
-  return createClient(supabaseUrl, supabaseAnonKey);
-}
+const quickActions = [
+  "Yayinci basvurulari",
+  "Sikayet merkezi",
+  "Duyuru olustur",
+  "Finans ozeti",
+];
 
 export default function AdminPage() {
-  const [loading, setLoading] = useState(true);
-  const [authorized, setAuthorized] = useState(false);
-  const [message, setMessage] = useState("");
+  const { loading, authorized, message, signOut } = useAdminAccess();
 
-  useEffect(() => {
-    async function checkAccess() {
-      try {
-        const supabase = getSupabaseClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
-        if (!user) {
-          setMessage("Yetkisiz erisim.");
-          setLoading(false);
-          return;
-        }
-
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .single<{ role: AdminRole }>();
-
-        if (profile?.role === "admin" || profile?.role === "owner") {
-          setAuthorized(true);
-        } else {
-          setMessage("Yetkisiz erisim.");
-        }
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : "Beklenmeyen bir hata olustu.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    checkAccess();
-  }, []);
+  if (loading || !authorized) {
+    return <AdminAccessState loading={loading} authorized={authorized} message={message} />;
+  }
 
   return (
-    <main className="min-h-screen bg-cyan-100 px-4 py-6 text-slate-800 sm:px-6">
-      <section className="mx-auto w-full max-w-6xl rounded-3xl bg-white p-6 shadow-sm sm:p-8">
-        <p className="text-xs uppercase tracking-[0.3em] text-pink-500">Poncik Live</p>
-        <h1 className="mt-4 text-3xl font-bold text-indigo-800">Admin Panel</h1>
+    <AdminLayout
+      title="Dashboard"
+      description="Yonetim akisini hizli takip etmek icin ozet metrikler ve kritik paneller."
+      onLogout={signOut}
+    >
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {summaryCards.map((card) => (
+          <article key={card.label} className="rounded-3xl bg-white p-4 shadow-sm">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{card.label}</p>
+            <p className="mt-3 text-2xl font-bold text-indigo-800">{card.value}</p>
+            <p className="mt-2 text-xs text-pink-600">{card.note}</p>
+          </article>
+        ))}
+      </section>
 
-        {loading ? (
-          <p className="mt-6 text-sm text-slate-500">Yetkiler kontrol ediliyor...</p>
-        ) : null}
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <article className="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-indigo-800">Son Hareketler</h2>
+          <ul className="mt-4 space-y-2 text-sm text-slate-600">
+            {recentActions.map((action) => (
+              <li key={action} className="rounded-2xl bg-cyan-50 px-3 py-2">
+                {action}
+              </li>
+            ))}
+          </ul>
+        </article>
 
-        {!loading && !authorized ? (
-          <p className="mt-6 rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
-            {message || "Yetkisiz erisim"}
-          </p>
-        ) : null}
-
-        {!loading && authorized ? (
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {adminCards.map((card) => (
-              <article key={card} className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
-                <h2 className="font-semibold text-indigo-700">{card}</h2>
-                <p className="mt-2 text-sm text-slate-500">Placeholder panel karti</p>
-              </article>
+        <article className="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-indigo-800">Hizli Yonetim</h2>
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {quickActions.map((action) => (
+              <button
+                key={action}
+                type="button"
+                className="rounded-2xl bg-pink-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-pink-400"
+              >
+                {action}
+              </button>
             ))}
           </div>
-        ) : null}
+        </article>
       </section>
-    </main>
+    </AdminLayout>
   );
 }
