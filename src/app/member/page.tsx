@@ -3,6 +3,7 @@
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { fetchLiveRooms, type LiveRoom } from "@/lib/live-rooms";
 
 const menuItems = [
   { label: "Sohbet Et", href: "#" },
@@ -15,9 +16,6 @@ const menuItems = [
   { label: "Bildirimler", href: "#" },
   { label: "Canli Destek", href: "#" },
 ];
-
-const featuredStreamers = ["LunaMavi", "NoraGlow", "PapatyaLive", "MiraSohbet"];
-const onlineStreamers = ["RoseMoon", "LilaWave", "MintQueen", "NehirTalk", "VioletSky", "CosmoAda"];
 
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -32,6 +30,8 @@ function getSupabaseClient() {
 
 export default function MemberPage() {
   const [errorMessage, setErrorMessage] = useState("");
+  const [liveRooms, setLiveRooms] = useState<LiveRoom[]>([]);
+  const [liveRoomsWarning, setLiveRoomsWarning] = useState("");
 
   useEffect(() => {
     async function checkUser() {
@@ -44,8 +44,11 @@ export default function MemberPage() {
         if (!user) {
           window.location.href = "/login";
         }
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Beklenmeyen bir hata olustu.");
+        const { rooms, hasError } = await fetchLiveRooms(24);
+        setLiveRooms(rooms);
+        setLiveRoomsWarning(hasError ? "Canli liste su an yenilenemedi." : "");
+      } catch {
+        setErrorMessage("Hesap kontrolu su an yapilamadi.");
       }
     }
 
@@ -60,6 +63,9 @@ export default function MemberPage() {
       window.location.href = "/login";
     }
   }
+
+  const featuredStreamers = liveRooms.slice(0, 5);
+  const showEmptyState = liveRooms.length === 0;
 
   return (
     <main className="min-h-screen bg-cyan-100 px-4 py-4 text-slate-800 sm:px-6">
@@ -102,7 +108,7 @@ export default function MemberPage() {
           </header>
 
           {errorMessage ? (
-            <p className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
+            <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
               {errorMessage}
             </p>
           ) : null}
@@ -110,27 +116,42 @@ export default function MemberPage() {
           <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
             <h2 className="text-lg font-semibold text-indigo-800">Gunun Populer Yayincilari</h2>
             <div className="mt-4 flex gap-3 overflow-x-auto">
-              {featuredStreamers.map((name) => (
-                <article key={name} className="min-w-[160px] rounded-2xl bg-cyan-50 p-3">
-                  <div className="h-14 w-14 rounded-full bg-gradient-to-br from-pink-300 to-violet-400" />
-                  <p className="mt-3 text-sm font-semibold">{name}</p>
-                  <p className="mt-1 text-xs text-emerald-600">online • HD</p>
-                </article>
-              ))}
+              {featuredStreamers.length > 0 ? (
+                featuredStreamers.map((room) => (
+                  <article key={room.id} className="min-w-[160px] rounded-2xl bg-cyan-50 p-3">
+                    <div className="h-14 w-14 rounded-full bg-gradient-to-br from-pink-300 to-violet-400" />
+                    <p className="mt-3 text-sm font-semibold">{room.streamerName}</p>
+                    <p className="mt-1 text-xs text-emerald-600">canli • HD</p>
+                  </article>
+                ))
+              ) : (
+                <div className="w-full rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-5 text-sm text-slate-600">
+                  <p className="font-semibold text-indigo-700">Su an canli yayin yok</p>
+                  <p className="mt-1 text-slate-500">Yayincilar online oldugunda burada gorunecek.</p>
+                </div>
+              )}
             </div>
           </div>
 
           <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
             <h2 className="text-lg font-semibold text-indigo-800">Online Yayincilar</h2>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-              {onlineStreamers.map((name) => (
-                <article key={name} className="rounded-2xl bg-cyan-50 p-3">
-                  <div className="h-16 rounded-xl bg-gradient-to-br from-indigo-300 to-pink-300" />
-                  <p className="mt-3 text-sm font-semibold">{name}</p>
-                  <p className="mt-1 text-xs text-emerald-600">canli • HD</p>
-                </article>
-              ))}
-            </div>
+            {!showEmptyState ? (
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+                {liveRooms.map((room) => (
+                  <article key={room.id} className="rounded-2xl bg-cyan-50 p-3">
+                    <div className="h-16 rounded-xl bg-gradient-to-br from-indigo-300 to-pink-300" />
+                    <p className="mt-3 text-sm font-semibold">{room.streamerName}</p>
+                    <p className="mt-1 text-xs text-emerald-600">canli • HD</p>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-5 text-sm text-slate-600">
+                <p className="font-semibold text-indigo-700">Su an canli yayin yok</p>
+                <p className="mt-1 text-slate-500">Yayincilar online oldugunda burada gorunecek.</p>
+              </div>
+            )}
+            {liveRoomsWarning ? <p className="mt-3 text-xs text-slate-500">{liveRoomsWarning}</p> : null}
           </div>
         </section>
       </div>

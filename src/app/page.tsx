@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { fetchLiveRooms } from "@/lib/live-rooms";
 
 const sidebarLinks = [
   { label: "Uye Girisi", href: "/login" },
@@ -7,26 +8,10 @@ const sidebarLinks = [
   { label: "Canli Destek", href: "#" },
 ];
 
-const featuredStreamers = [
-  "LunaMavi",
-  "NoraGlow",
-  "PapatyaLive",
-  "MiraSohbet",
-  "SugarPoncik",
-];
+export default async function HomePage() {
+  const { rooms: liveRooms, hasError } = await fetchLiveRooms(24);
+  const featuredStreamers = liveRooms.slice(0, 5);
 
-const onlineStreamers = [
-  "RoseMoon",
-  "LilaWave",
-  "MintQueen",
-  "NehirTalk",
-  "VioletSky",
-  "LilacPulse",
-  "DreamNisa",
-  "CosmoAda",
-];
-
-export default function HomePage() {
   return (
     <main className="min-h-screen bg-cyan-100 text-slate-800">
       <header className="border-b border-indigo-200 bg-gradient-to-r from-indigo-600 to-sky-500 px-4 py-4 text-white sm:px-6">
@@ -74,42 +59,62 @@ export default function HomePage() {
               </span>
             </div>
             <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
-              {featuredStreamers.map((name) => (
-                <article
-                  key={name}
-                  className="min-w-[160px] rounded-2xl border border-cyan-100 bg-cyan-50 p-3"
-                >
-                  <div className="h-14 w-14 rounded-full bg-gradient-to-br from-pink-300 to-violet-400" />
-                  <p className="mt-3 text-sm font-semibold text-slate-700">{name}</p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                    <span className="text-xs text-slate-500">online</span>
-                    <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                      HD
-                    </span>
-                  </div>
-                </article>
-              ))}
+              {featuredStreamers.length > 0 ? (
+                featuredStreamers.map((room) => (
+                  <article
+                    key={room.id}
+                    className="min-w-[160px] rounded-2xl border border-cyan-100 bg-cyan-50 p-3"
+                  >
+                    <div className="h-14 w-14 rounded-full bg-gradient-to-br from-pink-300 to-violet-400" />
+                    <p className="mt-3 text-sm font-semibold text-slate-700">{room.streamerName}</p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                      <span className="text-xs text-slate-500">canli</span>
+                      <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                        HD
+                      </span>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <div className="w-full rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-5 text-sm text-slate-600">
+                  <p className="font-semibold text-indigo-700">Su an canli yayin yok</p>
+                  <p className="mt-1 text-slate-500">Yayincilar online oldugunda burada gorunecek.</p>
+                  {hasError ? (
+                    <p className="mt-2 text-xs text-slate-400">Canli liste simdilik yenilenemedi.</p>
+                  ) : null}
+                </div>
+              )}
             </div>
           </section>
 
           <section className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
             <h2 className="text-lg font-semibold text-indigo-800">Online Yayincilar</h2>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-              {onlineStreamers.map((name) => (
-                <article key={name} className="rounded-2xl border border-cyan-100 bg-cyan-50 p-3">
-                  <div className="h-16 rounded-xl bg-gradient-to-br from-indigo-300 to-pink-300" />
-                  <p className="mt-3 text-sm font-semibold text-slate-700">{name}</p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                    <span className="text-xs text-slate-500">canli</span>
-                    <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                      HD
-                    </span>
-                  </div>
-                </article>
-              ))}
-            </div>
+            {liveRooms.length > 0 ? (
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+                {liveRooms.map((room) => (
+                  <article key={room.id} className="rounded-2xl border border-cyan-100 bg-cyan-50 p-3">
+                    <div className="h-16 rounded-xl bg-gradient-to-br from-indigo-300 to-pink-300" />
+                    <p className="mt-3 text-sm font-semibold text-slate-700">{room.streamerName}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                      <span className="text-xs text-slate-500">canli</span>
+                      <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                        HD
+                      </span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-5 text-sm text-slate-600">
+                <p className="font-semibold text-indigo-700">Su an canli yayin yok</p>
+                <p className="mt-1 text-slate-500">Yayincilar online oldugunda burada gorunecek.</p>
+                {hasError ? (
+                  <p className="mt-2 text-xs text-slate-400">Canli liste simdilik yenilenemedi.</p>
+                ) : null}
+              </div>
+            )}
           </section>
         </div>
       </section>

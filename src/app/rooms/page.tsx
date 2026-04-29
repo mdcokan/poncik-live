@@ -1,40 +1,23 @@
 import Link from "next/link";
+import { fetchLiveRooms, formatUpdatedAtShort } from "@/lib/live-rooms";
 
-const rooms = [
-  {
-    title: "Genel Sohbet",
-    status: "Yakında",
-    description: "Yayıncıların canlıya çıkacağı, izleyicilerin sohbet edeceği açık oda alanı.",
-  },
-  {
-    title: "Özel Oda",
-    status: "Planlandı",
-    description: "Yayıncı ve izleyici arasında davet, kabul/red ve dakika bazlı coin akışı.",
-  },
-  {
-    title: "Coin & Hediye",
-    status: "Planlandı",
-    description: "Hediye gönderimi, cüzdan hareketleri ve yayıncı kazanç takibi.",
-  },
-];
+export default async function RoomsPage() {
+  const { rooms: liveRooms, hasError } = await fetchLiveRooms(24);
 
-export default function RoomsPage() {
   return (
-    <main className="min-h-screen bg-black px-5 py-8 text-white">
+    <main className="min-h-screen bg-cyan-100 px-4 py-6 text-slate-800 sm:px-6">
       <section className="mx-auto w-full max-w-5xl">
-        <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6 shadow-2xl shadow-pink-950/20">
-          <p className="text-xs font-medium uppercase tracking-[0.35em] text-pink-300">
-            Poncik Live
-          </p>
+        <div className="rounded-3xl border border-pink-100 bg-white p-6 shadow-sm">
+          <p className="text-xs font-medium uppercase tracking-[0.35em] text-pink-400">Poncik Live</p>
 
           <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
-                Odaları Keşfet
+              <h1 className="text-3xl font-bold tracking-tight text-indigo-800 sm:text-4xl">
+                Online Yayincilar
               </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-                Bu ekran MVP oda deneyiminin başlangıcıdır. Önce sade ve hızlı bir liste
-                kuruyoruz; sonra canlı oda, özel oda ve coin akışını kontrollü şekilde ekleyeceğiz.
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
+                Canli odalar en guncel aktiviteye gore listelenir. Yayin bitince liste otomatik olarak
+                sade bir sekilde bosalir.
               </p>
             </div>
 
@@ -47,37 +30,45 @@ export default function RoomsPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          {rooms.map((room) => (
-            <article
-              key={room.title}
-              className="rounded-3xl border border-white/10 bg-white/[0.04] p-5"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-xl font-bold">{room.title}</h2>
-                <span className="rounded-full border border-pink-400/30 bg-pink-400/10 px-3 py-1 text-xs font-semibold text-pink-200">
-                  {room.status}
-                </span>
-              </div>
+        {liveRooms.length > 0 ? (
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {liveRooms.map((room) => (
+              <article key={room.id} className="rounded-3xl border border-cyan-100 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="text-lg font-bold text-slate-800">{room.streamerName}</h2>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">
+                      CANLI
+                    </span>
+                    <span className="rounded-full bg-indigo-100 px-3 py-1 text-[11px] font-bold text-indigo-700">
+                      HD
+                    </span>
+                  </div>
+                </div>
 
-              <p className="mt-4 text-sm leading-6 text-zinc-400">
-                {room.description}
-              </p>
+                <p className="mt-3 text-sm text-slate-500">{formatUpdatedAtShort(room.updatedAt)}</p>
 
-              <button
-                type="button"
-                disabled
-                className="mt-5 w-full rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-zinc-500"
-              >
-                Çok yakında
-              </button>
-            </article>
-          ))}
-        </div>
+                <button
+                  type="button"
+                  disabled
+                  className="mt-5 w-full rounded-full border border-indigo-100 bg-indigo-50 px-5 py-3 text-sm font-semibold text-indigo-400"
+                >
+                  Odaya gir
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-6 rounded-3xl border border-cyan-100 bg-white p-6 text-center shadow-sm">
+            <p className="text-base font-semibold text-indigo-700">Su an canli yayin yok</p>
+            <p className="mt-2 text-sm text-slate-500">Yayincilar online oldugunda burada gorunecek.</p>
+            {hasError ? <p className="mt-3 text-xs text-slate-400">Canli liste su an yenilenemedi.</p> : null}
+          </div>
+        )}
 
         <Link
           href="/"
-          className="mt-6 inline-flex rounded-full border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+          className="mt-6 inline-flex rounded-full border border-indigo-100 bg-white px-5 py-3 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-50"
         >
           Ana sayfaya dön
         </Link>
