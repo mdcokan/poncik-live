@@ -2,6 +2,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 const sidebarLinks = [
@@ -12,6 +13,7 @@ const sidebarLinks = [
 ];
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">(
@@ -36,7 +38,7 @@ export default function LoginPage() {
 
     const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -48,8 +50,32 @@ export default function LoginPage() {
     }
 
     setStatus("success");
-    setMessage("Giris basarili. Uye paneline yonlendiriliyorsun...");
-    window.location.href = "/member";
+    setMessage("Giris basarili. Yonlendiriliyorsun...");
+
+    const userId = data.user?.id;
+
+    if (!userId) {
+      router.push("/member");
+      return;
+    }
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profile?.role === "admin" || profile?.role === "owner") {
+      router.push("/admin");
+      return;
+    }
+
+    if (profile?.role === "streamer") {
+      router.push("/streamer");
+      return;
+    }
+
+    router.push("/member");
   }
 
   return (
