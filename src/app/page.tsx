@@ -1,82 +1,117 @@
 import Link from "next/link";
-const features = [
-  {
-    title: "Genel Odalar",
-    description:
-      "Yayıncıların canlıya çıktığı, izleyicilerin sohbet ettiği açık yayın alanları.",
-  },
-  {
-    title: "Özel Oda",
-    description:
-      "Yayıncı ve izleyici arasında davet, kabul/red ve dakika bazlı coin akışı.",
-  },
-  {
-    title: "Coin & Hediye",
-    description:
-      "Cüzdan, hediye gönderimi ve yayıncı kazançlarının kayıt altına alındığı sistem.",
-  },
+
+const sidebarLinks = [
+  { label: "Uye Girisi", href: "/login" },
+  { label: "Kayit Ol", href: "/signup" },
+  { label: "Yayinci Girisi", href: "/streamer-login" },
+  { label: "Canli Destek", href: "#" },
 ];
 
-export default function Home() {
+const featuredStreamers = [
+  "LunaMavi",
+  "NoraGlow",
+  "PapatyaLive",
+  "MiraSohbet",
+  "SugarPoncik",
+];
+
+const onlineStreamers = [
+  "RoseMoon",
+  "LilaWave",
+  "MintQueen",
+  "NehirTalk",
+  "VioletSky",
+  "LilacPulse",
+  "DreamNisa",
+  "CosmoAda",
+];
+
+export default function HomePage() {
   return (
-    <main className="min-h-screen bg-black text-white">
-      <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-between px-5 py-6 sm:px-8 lg:px-10">
-        <header className="flex items-center justify-between">
+    <main className="min-h-screen bg-cyan-100 text-slate-800">
+      <header className="border-b border-indigo-200 bg-gradient-to-r from-indigo-600 to-sky-500 px-4 py-4 text-white sm:px-6">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.35em] text-pink-300">
-              Poncik Live
-            </p>
-            <h1 className="mt-2 text-xl font-semibold tracking-tight">
-              Mobil öncelikli canlı yayın platformu
-            </h1>
+            <p className="text-xs uppercase tracking-[0.3em] text-pink-200">Poncik Live</p>
+            <h1 className="mt-1 text-lg font-semibold sm:text-xl">Misafir Ana Ekran</h1>
           </div>
-
-          <span className="rounded-full border border-pink-400/30 bg-pink-400/10 px-3 py-1 text-xs font-medium text-pink-200">
-            MVP kurulumu başladı
-          </span>
-        </header>
-
-        <div className="py-16 sm:py-24">
-          <div className="max-w-3xl">
-            <p className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300">
-              Genel oda · Özel oda · Coin · Hediye · Admin
-            </p>
-
-            <h2 className="text-4xl font-bold tracking-tight sm:text-6xl">
-              Canlı yayın, özel oda ve coin ekonomisi tek platformda.
-            </h2>
-
-            <p className="mt-6 max-w-2xl text-base leading-7 text-zinc-300 sm:text-lg">
-              Poncik Live; yayıncıların oda açabildiği, izleyicilerin sohbet
-              edebildiği, özel oda daveti gönderebildiği ve tüm coin
-              hareketlerinin güvenli ledger mantığıyla takip edildiği modern
-              bir canlı yayın altyapısıdır.
-            </p>
-
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href="/studio" className="rounded-full bg-pink-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-pink-400">Yayına Başla</Link>
-              <Link href="/rooms" className="rounded-full border border-white/15 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10">Odaları Keşfet</Link>
-            </div>
-          </div>
-
-          <div className="mt-12 grid gap-4 sm:grid-cols-3">
-            {features.map((feature) => (
-              <article
-                key={feature.title}
-                className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 shadow-2xl shadow-pink-950/20"
-              >
-                <h3 className="text-lg font-semibold">{feature.title}</h3>
-                <p className="mt-3 text-sm leading-6 text-zinc-400">
-                  {feature.description}
-                </p>
-              </article>
-            ))}
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-semibold">0 dk</span>
+            <button
+              type="button"
+              className="h-8 w-8 rounded-full bg-pink-400 text-lg font-bold leading-none text-white"
+            >
+              +
+            </button>
           </div>
         </div>
+      </header>
 
-        <footer className="border-t border-white/10 pt-5 text-xs text-zinc-500">
-          Poncik Live MVP · Next.js + TypeScript + Tailwind + Supabase
-        </footer>
+      <section className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[250px_1fr]">
+        <aside className="rounded-3xl bg-gradient-to-b from-indigo-700 to-violet-700 p-4 text-white shadow-lg">
+          <h2 className="px-2 text-sm font-semibold uppercase tracking-[0.2em] text-pink-200">
+            Menu
+          </h2>
+          <nav className="mt-3 space-y-2">
+            {sidebarLinks.map((item) => (
+              <Link
+                key={item.label}
+                href={item.href}
+                className="block rounded-2xl bg-white/10 px-4 py-3 text-sm font-medium transition hover:bg-white/20"
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+        </aside>
+
+        <div className="space-y-4">
+          <section className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-indigo-800">Gunun Populer Yayincilari</h2>
+              <span className="rounded-full bg-pink-100 px-3 py-1 text-xs font-semibold text-pink-600">
+                trend
+              </span>
+            </div>
+            <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
+              {featuredStreamers.map((name) => (
+                <article
+                  key={name}
+                  className="min-w-[160px] rounded-2xl border border-cyan-100 bg-cyan-50 p-3"
+                >
+                  <div className="h-14 w-14 rounded-full bg-gradient-to-br from-pink-300 to-violet-400" />
+                  <p className="mt-3 text-sm font-semibold text-slate-700">{name}</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                    <span className="text-xs text-slate-500">online</span>
+                    <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                      HD
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+            <h2 className="text-lg font-semibold text-indigo-800">Online Yayincilar</h2>
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+              {onlineStreamers.map((name) => (
+                <article key={name} className="rounded-2xl border border-cyan-100 bg-cyan-50 p-3">
+                  <div className="h-16 rounded-xl bg-gradient-to-br from-indigo-300 to-pink-300" />
+                  <p className="mt-3 text-sm font-semibold text-slate-700">{name}</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                    <span className="text-xs text-slate-500">canli</span>
+                    <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                      HD
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
       </section>
     </main>
   );
