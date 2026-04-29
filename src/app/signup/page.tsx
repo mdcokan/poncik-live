@@ -4,7 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 
-export default function LoginPage() {
+export default function SignupPage() {
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">(
@@ -29,9 +30,14 @@ export default function LoginPage() {
 
     const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          display_name: displayName,
+        },
+      },
     });
 
     if (error) {
@@ -41,7 +47,7 @@ export default function LoginPage() {
     }
 
     setStatus("success");
-    setMessage("Giriş başarılı. Profile yönlendiriliyorsun...");
+    setMessage("Kayıt başarılı. Profile yönlendiriliyorsun...");
     window.location.href = "/profile";
   }
 
@@ -53,14 +59,27 @@ export default function LoginPage() {
         </p>
 
         <h1 className="mt-4 text-3xl font-bold tracking-tight">
-          Hesabına giriş yap
+          Yeni hesap oluştur
         </h1>
 
         <p className="mt-3 text-sm leading-6 text-zinc-400">
-          Email ve şifrenle hesabına giriş yap.
+          Yayınlara katılmak, profil oluşturmak ve odaları keşfetmek için kayıt ol.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-300">Ad / Görünen ad</span>
+            <input
+              type="text"
+              required
+              minLength={2}
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="Poncik kullanıcı adı"
+              className="mt-2 w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-pink-400"
+            />
+          </label>
+
           <label className="block">
             <span className="text-sm font-medium text-zinc-300">Email</span>
             <input
@@ -91,7 +110,7 @@ export default function LoginPage() {
             disabled={status === "loading"}
             className="w-full rounded-full bg-pink-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-pink-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {status === "loading" ? "Giriş yapılıyor..." : "Giriş yap"}
+            {status === "loading" ? "Kayıt oluşturuluyor..." : "Kayıt ol"}
           </button>
         </form>
 
@@ -108,9 +127,9 @@ export default function LoginPage() {
         ) : null}
 
         <p className="mt-6 text-center text-sm text-zinc-400">
-          Hesabın yok mu?{" "}
-          <Link href="/signup" className="font-semibold text-pink-300">
-            Kayıt ol
+          Zaten hesabın var mı?{" "}
+          <Link href="/login" className="font-semibold text-pink-300">
+            Giriş yap
           </Link>
         </p>
       </section>
