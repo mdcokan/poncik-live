@@ -18,6 +18,15 @@ type StudioRoom = {
   status: RoomStatus;
 };
 
+type GiftCatalogItem = {
+  id: string;
+  code: string;
+  name: string;
+  emoji: string;
+  price: number;
+  sortOrder: number;
+};
+
 function getPresenceRoleLabel(role: string) {
   if (role === "streamer") {
     return "Yayinci";
@@ -66,6 +75,9 @@ export default function StudioPage() {
   const [chatSending, setChatSending] = useState(false);
   const [chatRefreshing, setChatRefreshing] = useState(false);
   const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUser[]>([]);
+  const [giftCatalog, setGiftCatalog] = useState<GiftCatalogItem[]>([]);
+  const [isGiftCatalogLoading, setIsGiftCatalogLoading] = useState(false);
+  const [hasGiftCatalogLoaded, setHasGiftCatalogLoaded] = useState(false);
   const [chatIdentity, setChatIdentity] = useState<{ userId: string | null; displayName: string | null }>({
     userId: null,
     displayName: null,
@@ -618,6 +630,47 @@ export default function StudioPage() {
     }
   }
 
+  useEffect(() => {
+    if (activeTab !== "gift" || hasGiftCatalogLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    async function loadGiftCatalog() {
+      setIsGiftCatalogLoading(true);
+      try {
+        const response = await fetch("/api/gifts/catalog?limit=50", { cache: "no-store" });
+        if (!response.ok) {
+          if (!cancelled) {
+            setGiftCatalog([]);
+            setHasGiftCatalogLoaded(true);
+          }
+          return;
+        }
+
+        const payload = (await response.json()) as { items?: GiftCatalogItem[] };
+        if (!cancelled) {
+          setGiftCatalog(Array.isArray(payload.items) ? payload.items : []);
+          setHasGiftCatalogLoaded(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setGiftCatalog([]);
+          setHasGiftCatalogLoaded(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsGiftCatalogLoading(false);
+        }
+      }
+    }
+
+    void loadGiftCatalog();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, hasGiftCatalogLoaded]);
+
   return (
     <main className="min-h-screen bg-[#eef7fb] text-zinc-900 lg:h-[100dvh] lg:overflow-hidden">
       <header className="relative z-[100] h-16 border-b border-pink-100/80 bg-white/80 backdrop-blur">
@@ -956,14 +1009,31 @@ export default function StudioPage() {
           </div>
 
           <div className="shrink-0 border-b border-zinc-200 px-6 py-3 text-center text-base font-black text-zinc-700">
-            {activeTab === "chat" ? "Odadakiler" : "Hediye Akışı"}
+            {activeTab === "chat" ? "Odadakiler" : "Hediye Katalogu"}
           </div>
 
           <div ref={roomMessagesRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
             {activeTab === "gift" ? (
-              <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
-                Hediye olaylari burada listelenecek.
-              </div>
+              isGiftCatalogLoading ? (
+                <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+                  Hediye katalogu yukleniyor...
+                </div>
+              ) : giftCatalog.length === 0 ? (
+                <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+                  Henuz aktif hediye yok.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {giftCatalog.map((giftItem) => (
+                    <article key={giftItem.id} className="rounded-2xl border border-pink-100 bg-white p-3 shadow-sm">
+                      <p className="text-2xl leading-none">{giftItem.emoji}</p>
+                      <p className="mt-2 text-sm font-black text-zinc-800">{giftItem.name}</p>
+                      <p className="mt-1 text-xs font-semibold text-pink-600">{giftItem.price} coin</p>
+                      <p className="mt-2 text-[11px] text-zinc-500">Gonderme sonraki fazda baglanacak.</p>
+                    </article>
+                  ))}
+                </div>
+              )
             ) : (
               <div>
                 <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3">
@@ -1050,6 +1120,9 @@ export default function StudioPage() {
             ) : null}
             {activeTab === "chat" && chatBody.trim().length > 500 ? (
               <p className="mt-2 text-xs text-rose-600">Mesaj en fazla 500 karakter olabilir.</p>
+            ) : null}
+            {activeTab === "gift" ? (
+              <p className="mt-2 text-xs text-zinc-500">Gonderme sonraki fazda baglanacak.</p>
             ) : null}
           </div>
         </aside>

@@ -30,6 +30,15 @@ type ViewerState = {
   isLoading: boolean;
 };
 
+type GiftCatalogItem = {
+  id: string;
+  code: string;
+  name: string;
+  emoji: string;
+  price: number;
+  sortOrder: number;
+};
+
 function getStreamerName(room: RoomRow | null, profile: ProfileRow | null) {
   const profileName = profile?.display_name?.trim();
   const roomTitle = room?.title?.trim();
@@ -115,6 +124,9 @@ export default function ViewerRoomClientPage() {
   const [isSending, setIsSending] = useState(false);
   const [isRefreshingMessages, setIsRefreshingMessages] = useState(false);
   const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUser[]>([]);
+  const [giftCatalog, setGiftCatalog] = useState<GiftCatalogItem[]>([]);
+  const [isGiftCatalogLoading, setIsGiftCatalogLoading] = useState(false);
+  const [hasGiftCatalogLoaded, setHasGiftCatalogLoaded] = useState(false);
   const messageIdsRef = useRef(new Set<string>());
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -523,6 +535,47 @@ export default function ViewerRoomClientPage() {
     }
   }
 
+  useEffect(() => {
+    if (activeTab !== "gift" || hasGiftCatalogLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    async function loadGiftCatalog() {
+      setIsGiftCatalogLoading(true);
+      try {
+        const response = await fetch("/api/gifts/catalog?limit=50", { cache: "no-store" });
+        if (!response.ok) {
+          if (!cancelled) {
+            setGiftCatalog([]);
+            setHasGiftCatalogLoaded(true);
+          }
+          return;
+        }
+
+        const payload = (await response.json()) as { items?: GiftCatalogItem[] };
+        if (!cancelled) {
+          setGiftCatalog(Array.isArray(payload.items) ? payload.items : []);
+          setHasGiftCatalogLoaded(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setGiftCatalog([]);
+          setHasGiftCatalogLoaded(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsGiftCatalogLoading(false);
+        }
+      }
+    }
+
+    void loadGiftCatalog();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, hasGiftCatalogLoaded]);
+
   if (state.isLoading) {
     return (
       <main className="min-h-screen bg-cyan-100 px-4 py-6 text-slate-800 sm:px-6">
@@ -649,14 +702,47 @@ export default function ViewerRoomClientPage() {
           </div>
 
           <div className="shrink-0 border-b border-zinc-200 px-6 py-3 text-center text-base font-black text-zinc-700">
-            {activeTab === "chat" ? "Sohbet" : "Hediye Akisi"}
+            {activeTab === "chat" ? "Sohbet" : "Hediye Katalogu"}
           </div>
 
           <div ref={messagesContainerRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
             {activeTab === "gift" ? (
-              <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
-                Hediye olaylari bir sonraki fazda aktif edilecek.
-              </div>
+              !state.isLoggedIn ? (
+                <div className="rounded-2xl border border-pink-100 bg-white p-5 text-center">
+                  <p className="text-sm font-semibold text-zinc-700">Hediye gondermek icin giris yapmalisin.</p>
+                  <Link
+                    href="/login"
+                    className="mt-3 inline-flex rounded-full bg-pink-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-pink-400"
+                  >
+                    Uye girisi
+                  </Link>
+                </div>
+              ) : isGiftCatalogLoading ? (
+                <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+                  Hediye katalogu yukleniyor...
+                </div>
+              ) : giftCatalog.length === 0 ? (
+                <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+                  Henuz aktif hediye yok.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {giftCatalog.map((giftItem) => (
+                    <article key={giftItem.id} className="rounded-2xl border border-pink-100 bg-white p-3 shadow-sm">
+                      <p className="text-2xl leading-none">{giftItem.emoji}</p>
+                      <p className="mt-2 text-sm font-black text-zinc-800">{giftItem.name}</p>
+                      <p className="mt-1 text-xs font-semibold text-pink-600">{giftItem.price} coin</p>
+                      <button
+                        type="button"
+                        disabled
+                        className="mt-2 rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-500 disabled:cursor-not-allowed"
+                      >
+                        {isLive ? "Gonderme sonraki fazda baglanacak." : "Offline odada gonderim kapali."}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              )
             ) : (
               <div>
                 <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3">
@@ -748,6 +834,11 @@ export default function ViewerRoomClientPage() {
               <p className="mt-2 text-xs text-zinc-500">Yayin kapaliyken mesaj gonderilemez.</p>
             ) : null}
             {activeTab === "chat" && chatValidationError ? <p className="mt-2 text-xs text-rose-600">{chatValidationError}</p> : null}
+            {activeTab === "gift" && state.isLoggedIn ? (
+              <p className="mt-2 text-xs text-zinc-500">
+                {isLive ? "Gonderme sonraki fazda baglanacak." : "Offline odada hediye gonderimi kapali."}
+              </p>
+            ) : null}
           </div>
         </aside>
       </section>
