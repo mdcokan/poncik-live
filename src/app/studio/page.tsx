@@ -4,10 +4,10 @@ import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 
-export default function NewRoomPage() {
+export default function StudioPage() {
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
   const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -27,17 +27,26 @@ export default function NewRoomPage() {
     async function loadUser() {
       try {
         const supabase = getSupabase();
+
         const {
           data: { user },
-          error,
+          error: userError,
         } = await supabase.auth.getUser();
 
-        if (error || !user) {
+        if (userError || !user) {
           window.location.href = "/login";
           return;
         }
 
         setOwnerId(user.id);
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("display_name")
+          .eq("id", user.id)
+          .single();
+
+        setDisplayName(profile?.display_name ?? user.email ?? "Yayıncı");
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Beklenmeyen hata oluştu.");
       } finally {
@@ -48,12 +57,12 @@ export default function NewRoomPage() {
     loadUser();
   }, []);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleStartLive(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!ownerId) {
       setStatus("error");
-      setMessage("Oda oluşturmak için giriş yapmalısın.");
+      setMessage("Yayın başlatmak için giriş yapmalısın.");
       return;
     }
 
@@ -63,10 +72,15 @@ export default function NewRoomPage() {
     try {
       const supabase = getSupabase();
 
+      const finalTitle =
+        title.trim().length >= 3
+          ? title.trim()
+          : `${displayName ?? "Yayıncı"} canlı yayında`;
+
       const { error } = await supabase.from("rooms").insert({
         owner_id: ownerId,
-        title,
-        description: description || null,
+        title: finalTitle,
+        description: "Genel canlı yayın odası",
         status: "live",
         is_private: false,
       });
@@ -78,7 +92,7 @@ export default function NewRoomPage() {
       }
 
       setStatus("success");
-      setMessage("Oda oluşturuldu. Odalar sayfasına yönlendiriliyorsun...");
+      setMessage("Canlı yayın başlatıldı. Online odalara yönlendiriliyorsun...");
       window.location.href = "/rooms";
     } catch (error) {
       setStatus("error");
@@ -93,21 +107,23 @@ export default function NewRoomPage() {
           Poncik Live
         </p>
 
-        <h1 className="mt-4 text-3xl font-bold tracking-tight">Oda oluştur</h1>
+        <h1 className="mt-4 text-3xl font-bold tracking-tight">Yayını Başlat</h1>
 
         <p className="mt-3 text-sm leading-6 text-zinc-400">
-          Şimdilik basit bir genel oda açıyoruz. Canlı yayın ve chat akışını bunun üzerine ekleyeceğiz.
+          Yayını başlattığında sistem senin canlı yayın odanı otomatik açar.
+          İzleyiciler seni Odaları Keşfet ekranında online olarak görür.
         </p>
 
         {loadingUser ? (
           <p className="mt-8 text-sm text-zinc-300">Kullanıcı kontrol ediliyor...</p>
         ) : (
-          <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+          <form onSubmit={handleStartLive} className="mt-8 space-y-4">
             <label className="block">
-              <span className="text-sm font-medium text-zinc-300">Oda başlığı</span>
+              <span className="text-sm font-medium text-zinc-300">
+                Yayın başlığı
+              </span>
               <input
                 type="text"
-                required
                 minLength={3}
                 maxLength={80}
                 value={title}
@@ -117,23 +133,12 @@ export default function NewRoomPage() {
               />
             </label>
 
-            <label className="block">
-              <span className="text-sm font-medium text-zinc-300">Açıklama</span>
-              <textarea
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="Odanı kısa anlat"
-                rows={4}
-                className="mt-2 w-full resize-none rounded-2xl border border-white/10 bg-black px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-pink-400"
-              />
-            </label>
-
             <button
               type="submit"
               disabled={status === "loading"}
               className="w-full rounded-full bg-pink-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-pink-400 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {status === "loading" ? "Oda oluşturuluyor..." : "Odayı oluştur"}
+              {status === "loading" ? "Yayın başlatılıyor..." : "Canlı yayını başlat"}
             </button>
           </form>
         )}
@@ -154,7 +159,7 @@ export default function NewRoomPage() {
           href="/rooms"
           className="mt-6 inline-flex rounded-full border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
         >
-          Odalara dön
+          Online yayıncıları gör
         </Link>
       </section>
     </main>

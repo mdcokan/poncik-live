@@ -54,7 +54,7 @@ export default function Home() {
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href="/profile" className="rounded-full bg-pink-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-pink-400">Yayına Başla</Link>
+              <Link href="/studio" className="rounded-full bg-pink-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-pink-400">Yayına Başla</Link>
               <Link href="/rooms" className="rounded-full border border-white/15 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10">Odaları Keşfet</Link>
             </div>
           </div>
@@ -81,3 +81,4 @@ export default function Home() {
     </main>
   );
 }
+
