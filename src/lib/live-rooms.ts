@@ -39,7 +39,16 @@ function getSupabaseClient() {
     throw new Error("Supabase ortam degiskenleri eksik.");
   }
 
-  return createClient(supabaseUrl, supabaseAnonKey);
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      fetch: (input, init) => {
+        return fetch(input, {
+          ...init,
+          cache: "no-store",
+        });
+      },
+    },
+  });
 }
 
 function resolveStreamerName(room: RoomRow, profile: ProfileRow | undefined) {
@@ -64,7 +73,12 @@ export async function fetchLiveRooms(limit = 24): Promise<LiveRoomsResult> {
       return { rooms: [], hasError: Boolean(roomsError) };
     }
 
-    const ownerIds = Array.from(new Set(roomsData.map((room) => room.owner_id)));
+    const liveRoomsOnly = roomsData.filter((room) => room.status === "live");
+    if (!liveRoomsOnly.length) {
+      return { rooms: [], hasError: false };
+    }
+
+    const ownerIds = Array.from(new Set(liveRoomsOnly.map((room) => room.owner_id)));
     const { data: profilesData, error: profilesError } = await supabase
       .from("profiles")
       .select("id, display_name, role")
@@ -74,7 +88,7 @@ export async function fetchLiveRooms(limit = 24): Promise<LiveRoomsResult> {
       (profilesData ?? []).map((profile) => [profile.id, profile]),
     );
 
-    const rooms: LiveRoom[] = roomsData.map((room) => {
+    const rooms: LiveRoom[] = liveRoomsOnly.map((room) => {
       const profile = profilesById.get(room.owner_id);
 
       return {
