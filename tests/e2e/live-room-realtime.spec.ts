@@ -155,7 +155,7 @@ test("live room card appears and disappears without member refresh", async ({ br
   const memberPage = await memberContext.newPage();
 
   const streamerLiveCardsOnMember = memberPage.locator("article").filter({ hasText: streamerNameRegex });
-  const noLiveRoomText = memberPage.getByText(noLiveRoomRegex);
+  const noLiveRoomText = memberPage.getByText(noLiveRoomRegex).first();
   const startButton = streamerPage.getByRole("button", { name: /ba[sş]la/i });
   const stopButton = streamerPage.getByRole("button", { name: /b[ıiİI]t[ıiİI]r/i });
 
@@ -218,12 +218,10 @@ test("live room card appears and disappears without member refresh", async ({ br
 
     await stopButton.click();
     await expect(startButton).toBeVisible();
-    if (initialLiveCardCount === 0) {
-      await expect(streamerLiveCardsOnMember).toHaveCount(0, { timeout: 30_000 });
-    }
+    await expect(streamerLiveCardsOnMember).toHaveCount(initialLiveCardCount, { timeout: 30_000 });
 
     // If no other streams exist, an empty-state text should be shown.
-    if (await noLiveRoomText.isVisible()) {
+    if (initialLiveCardCount === 0 && (await noLiveRoomText.isVisible())) {
       await expect(noLiveRoomText).toBeVisible();
     }
   } finally {

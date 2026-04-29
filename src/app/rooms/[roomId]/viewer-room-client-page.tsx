@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 type RoomRow = {
@@ -23,6 +24,8 @@ type ViewerState = {
   room: RoomRow | null;
   ownerProfile: ProfileRow | null;
   isLoggedIn: boolean;
+  userId: string | null;
+  userDisplayName: string | null;
   isLoading: boolean;
 };
 
@@ -70,14 +73,98 @@ export default function ViewerRoomClientPage() {
     room: null,
     ownerProfile: null,
     isLoggedIn: false,
+    userId: null,
+    userDisplayName: null,
     isLoading: true,
   });
   const [hasFetchError, setHasFetchError] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "gift">("chat");
+  const [messages, setMessages] = useState<RoomMessage[]>([]);
+  const [chatBody, setChatBody] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [isRefreshingMessages, setIsRefreshingMessages] = useState(false);
+  const messageIdsRef = useRef(new Set<string>());
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isLive = state.room?.status === "live";
+  const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending;
+
+  const scrollMessagesToBottom = useCallback(() => {
+    const element = messagesContainerRef.current;
+    if (!element) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      element.scrollTop = element.scrollHeight;
+    });
+  }, []);
+
+  const mergeMessages = useCallback(
+    (incomingMessages: RoomMessage[]) => {
+      if (!incomingMessages.length) {
+        return;
+      }
+
+      setMessages((previousMessages) => {
+        const mergedMap = new Map<string, RoomMessage>();
+        for (const message of previousMessages) {
+          mergedMap.set(message.id, message);
+        }
+        for (const message of incomingMessages) {
+          mergedMap.set(message.id, message);
+        }
+
+        const dedupedSorted = Array.from(mergedMap.values()).sort(
+          (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+        );
+        const nextMessages = dedupedSorted.slice(-50);
+        messageIdsRef.current = new Set(nextMessages.map((message) => message.id));
+        return nextMessages;
+      });
+    },
+    [setMessages],
+  );
+
+  const refreshMessages = useCallback(async () => {
+    if (!roomId || !isLive || isRefreshingMessages) {
+      return;
+    }
+
+    setIsRefreshingMessages(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const fetchedMessages = await fetchRoomMessages(roomId, 50, supabase);
+      setMessages(fetchedMessages);
+      messageIdsRef.current = new Set(fetchedMessages.map((message) => message.id));
+      scrollMessagesToBottom();
+    } finally {
+      setIsRefreshingMessages(false);
+    }
+  }, [isLive, isRefreshingMessages, roomId, scrollMessagesToBottom]);
+
+  const scheduleRefreshMessages = useCallback(
+    (delayMs = 150) => {
+      if (refreshDebounceTimerRef.current) {
+        clearTimeout(refreshDebounceTimerRef.current);
+      }
+      refreshDebounceTimerRef.current = setTimeout(() => {
+        void refreshMessages();
+      }, delayMs);
+    },
+    [refreshMessages],
+  );
 
   useEffect(() => {
     if (!roomId) {
-      setState((prev) => ({ ...prev, isLoading: false, room: null, ownerProfile: null }));
+      setState((prev) => ({
+        ...prev,
+        isLoading: false,
+        room: null,
+        ownerProfile: null,
+        userId: null,
+        userDisplayName: null,
+      }));
       return;
     }
 
@@ -89,6 +176,16 @@ export default function ViewerRoomClientPage() {
         const {
           data: { user },
         } = await supabase.auth.getUser();
+        const userId = user?.id ?? null;
+        let userDisplayName: string | null = user?.email?.split("@")[0] ?? null;
+        if (userId) {
+          const { data: userProfileData } = await supabase
+            .from("profiles")
+            .select("display_name")
+            .eq("id", userId)
+            .maybeSingle();
+          userDisplayName = userProfileData?.display_name?.trim() || userDisplayName;
+        }
 
         const { data: roomData, error: roomError } = await supabase
           .from("rooms")
@@ -102,6 +199,8 @@ export default function ViewerRoomClientPage() {
               room: null,
               ownerProfile: null,
               isLoggedIn: Boolean(user),
+              userId,
+              userDisplayName,
               isLoading: false,
             });
           }
@@ -119,6 +218,8 @@ export default function ViewerRoomClientPage() {
             room: roomData,
             ownerProfile: ownerProfileData ?? null,
             isLoggedIn: Boolean(user),
+            userId,
+            userDisplayName,
             isLoading: false,
           });
         }
@@ -168,6 +269,9 @@ export default function ViewerRoomClientPage() {
             room: roomData,
             ownerProfile: ownerProfileData ?? null,
           }));
+          if (roomData.status !== "live") {
+            setChatBody("");
+          }
         }
       } catch {
         // Do not replace current viewer state on transient realtime refresh errors.
@@ -195,6 +299,85 @@ export default function ViewerRoomClientPage() {
       void supabase.removeChannel(channel);
     };
   }, [roomId]);
+
+  useEffect(() => {
+    if (!roomId || !isLive) {
+      setMessages([]);
+      return;
+    }
+    void refreshMessages();
+  }, [isLive, refreshMessages, roomId]);
+
+  useEffect(() => {
+    if (!roomId) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`public:room-messages:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "room_messages",
+          filter: `room_id=eq.${roomId}`,
+        },
+        () => {
+          scheduleRefreshMessages();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      if (refreshDebounceTimerRef.current) {
+        clearTimeout(refreshDebounceTimerRef.current);
+        refreshDebounceTimerRef.current = null;
+      }
+      void supabase.removeChannel(channel);
+    };
+  }, [roomId, scheduleRefreshMessages]);
+
+  async function handleSendMessage() {
+    const trimmedBody = chatBody.trim();
+    if (!state.userId || !roomId || !isLive || !trimmedBody || trimmedBody.length > 500 || isSending) {
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { data: insertedMessage } = await supabase
+        .from("room_messages")
+        .insert({
+          room_id: roomId,
+          sender_id: state.userId,
+          body: trimmedBody,
+        })
+        .select("id, room_id, sender_id, body, created_at")
+        .maybeSingle();
+
+      if (insertedMessage && !messageIdsRef.current.has(insertedMessage.id)) {
+        mergeMessages([
+          {
+            id: insertedMessage.id,
+            roomId: insertedMessage.room_id,
+            senderId: insertedMessage.sender_id,
+            senderName: state.userDisplayName || "Sen",
+            body: insertedMessage.body,
+            createdAt: insertedMessage.created_at,
+          },
+        ]);
+        scrollMessagesToBottom();
+      }
+
+      setChatBody("");
+      scheduleRefreshMessages(120);
+    } finally {
+      setIsSending(false);
+    }
+  }
 
   if (state.isLoading) {
     return (
@@ -229,6 +412,8 @@ export default function ViewerRoomClientPage() {
   }
 
   const streamerName = getStreamerName(state.room, state.ownerProfile);
+  const chatValidationError =
+    chatBody.trim().length > 500 ? "Mesaj en fazla 500 karakter olabilir." : chatBody.length > 0 && !chatBody.trim() ? "Bos mesaj gonderilemez." : null;
 
   return (
     <main className="min-h-screen bg-[#eef7fb] text-zinc-900 lg:h-[100dvh] lg:overflow-hidden">
@@ -320,15 +505,35 @@ export default function ViewerRoomClientPage() {
           </div>
 
           <div className="shrink-0 border-b border-zinc-200 px-6 py-3 text-center text-base font-black text-zinc-700">
-            Odadakiler
+            {activeTab === "chat" ? "Sohbet" : "Hediye Akisi"}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-            <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
-              Sohbet sistemi bir sonraki fazda aktif edilecek.
-            </div>
+          <div ref={messagesContainerRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            {activeTab === "gift" ? (
+              <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+                Hediye olaylari bir sonraki fazda aktif edilecek.
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
+                Henuz sohbet mesaji yok.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {messages.map((message) => (
+                  <article key={message.id} className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-bold text-pink-600">{message.senderName}</span>
+                      <span className="text-zinc-400">
+                        {new Date(message.createdAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-700">{message.body}</p>
+                  </article>
+                ))}
+              </div>
+            )}
 
-            {!state.isLoggedIn ? (
+            {activeTab === "chat" && !state.isLoggedIn ? (
               <div className="mt-4 rounded-2xl border border-pink-100 bg-white p-4 text-center">
                 <p className="text-sm font-semibold text-zinc-700">Sohbete katilmak icin giris yapmalisin.</p>
                 <Link
@@ -344,18 +549,34 @@ export default function ViewerRoomClientPage() {
           <div className="shrink-0 border-t border-zinc-200 p-4">
             <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
               <input
-                disabled
+                value={chatBody}
+                maxLength={500}
+                onChange={(event) => setChatBody(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleSendMessage();
+                  }
+                }}
+                disabled={activeTab !== "chat" || isChatInputDisabled}
                 placeholder="Mesajinizi buraya yaziniz..."
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500"
               />
               <button
                 type="button"
-                disabled
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-base shadow-sm disabled:opacity-60"
+                onClick={() => {
+                  void handleSendMessage();
+                }}
+                disabled={activeTab !== "chat" || isChatInputDisabled || Boolean(chatValidationError)}
+                className="inline-flex rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm disabled:opacity-60"
               >
-                🙂
+                {isSending ? "..." : "Gonder"}
               </button>
             </div>
+            {activeTab === "chat" && !isLive ? (
+              <p className="mt-2 text-xs text-zinc-500">Yayin kapaliyken mesaj gonderilemez.</p>
+            ) : null}
+            {activeTab === "chat" && chatValidationError ? <p className="mt-2 text-xs text-rose-600">{chatValidationError}</p> : null}
           </div>
         </aside>
       </section>
