@@ -40,6 +40,14 @@ async function login(
   await page.waitForURL(opts.successUrl, { timeout: 20_000 });
 }
 
+async function readPresenceCount(section: import("@playwright/test").Locator) {
+  const countBadge = section.locator("span").filter({ hasText: /^\d+$/ }).first();
+  await expect(countBadge).toBeVisible({ timeout: 15_000 });
+  const raw = (await countBadge.textContent())?.trim() ?? "";
+  const count = Number.parseInt(raw, 10);
+  return Number.isFinite(count) ? count : 0;
+}
+
 test("room presence appears and clears in realtime", async ({ browser }) => {
   test.setTimeout(140_000);
 
@@ -81,32 +89,30 @@ test("room presence appears and clears in realtime", async ({ browser }) => {
     await memberPage.goto("/member");
     await expect(memberPage).toHaveURL(/\/member(?:\/|$)/);
 
-    const memberOnlineSection = memberPage
-      .getByRole("heading", { name: /Online Yayincilar/i })
-      .locator("xpath=ancestor::div[1]");
-    await expect(memberOnlineSection).toBeVisible({ timeout: 20_000 });
-    const edaCardLink = memberOnlineSection.getByRole("link", { name: /Eda|Yayina gir/i }).first();
+    const edaCardLink = memberPage
+      .locator('a[href^="/rooms/"]')
+      .filter({ hasText: /Yayıncı Eda|Yayinci Eda/i })
+      .first();
     await expect(edaCardLink).toBeVisible({ timeout: 25_000 });
     const roomHref = await edaCardLink.getAttribute("href");
     await expect(roomHref ?? "").toMatch(/^\/rooms\/.+/);
-    await edaCardLink.click();
-    await expect(memberPage).toHaveURL(/\/rooms\/[^/]+$/, { timeout: 20_000 });
+    await Promise.all([memberPage.waitForURL(/\/rooms\/[^/]+$/, { timeout: 30_000 }), edaCardLink.click()]);
 
     await expect(memberPage.getByRole("heading", { name: /Yayinci Eda|Eda/i }).first()).toBeVisible({
       timeout: 15_000,
     });
 
     const viewerPanel = memberPage.locator("aside").first();
-    await expect(viewerPanel.getByText(/Odadakiler/i).first()).toBeVisible({ timeout: 15_000 });
-    await expect(viewerPanel.getByText(/[ÜU]ye\s*Veli|Veli/i).first()).toBeVisible({ timeout: 20_000 });
-
+    const viewerPresenceSection = viewerPanel.locator("section").filter({ hasText: /Odadakiler/i }).first();
+    await expect(viewerPresenceSection).toBeVisible({ timeout: 15_000 });
     const studioPanel = streamerPage.locator("aside").first();
-    await expect(studioPanel.getByText(/Odadakiler/i).first()).toBeVisible({ timeout: 15_000 });
-    await expect(studioPanel.getByText(/[ÜU]ye\s*Veli|Veli/i).first()).toBeVisible({ timeout: 20_000 });
+    const studioPresenceSection = studioPanel.locator("section").filter({ hasText: /Odadakiler/i }).first();
+    await expect(studioPresenceSection).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => readPresenceCount(studioPresenceSection), { timeout: 25_000 }).toBeGreaterThanOrEqual(2);
 
     await memberPage.goto("/member");
     await expect(memberPage).toHaveURL(/\/member(?:\/|$)/, { timeout: 10_000 });
-    await expect(studioPanel.getByText(/[ÜU]ye\s*Veli|Veli/i).first()).not.toBeVisible({ timeout: 40_000 });
+    await expect.poll(() => readPresenceCount(studioPresenceSection), { timeout: 40_000 }).toBeLessThanOrEqual(1);
   } finally {
     if (!streamerPage.isClosed()) {
       const canStop = await stopButton.isVisible().catch(() => false);

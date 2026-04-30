@@ -81,18 +81,16 @@ test("member message appears in viewer and studio without refresh", async ({ bro
     await memberPage.goto("/member");
     await expect(memberPage).toHaveURL(/\/member(?:\/|$)/);
 
-    const memberOnlineSection = memberPage
-      .getByRole("heading", { name: /Online Yayincilar/i })
-      .locator("xpath=ancestor::div[1]");
-    await expect(memberOnlineSection).toBeVisible({ timeout: 20_000 });
-    const roomLink = memberOnlineSection.getByRole("link", { name: /Eda|Yayina gir/i }).first();
+    const roomLink = memberPage
+      .locator('a[href^="/rooms/"]')
+      .filter({ hasText: /Yayıncı Eda|Yayinci Eda/i })
+      .first();
     await expect(roomLink).toBeVisible({ timeout: 25_000 });
     const roomHref = await roomLink.getAttribute("href");
     if (!roomHref || !/^\/rooms\/.+/.test(roomHref)) {
-      throw new Error("Yayina gir linki bulunamadi veya href gecersiz.");
+      throw new Error(`Yayina gir linki bulunamadi veya href gecersiz. href=${roomHref ?? "<null>"}`);
     }
-    await roomLink.click();
-    await expect(memberPage).toHaveURL(/\/rooms\/[^/]+$/);
+    await Promise.all([memberPage.waitForURL(/\/rooms\/[^/]+$/, { timeout: 30_000 }), roomLink.click()]);
 
     const uniqueMessage = `playwright sohbet test ${Date.now()}`;
     const viewerInput = memberPage.getByPlaceholder(/Mesaj.*yaz/i).first();

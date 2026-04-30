@@ -30,6 +30,8 @@ type GiftCatalogItem = {
   sortOrder: number;
 };
 
+const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
+
 function getPresenceRoleLabel(role: string) {
   if (role === "streamer") {
     return "Yayinci";
@@ -590,7 +592,7 @@ export default function StudioPage() {
     void upsertStreamerPresence();
     const heartbeatTimer = setInterval(() => {
       void upsertStreamerPresence();
-    }, 25000);
+    }, PRESENCE_HEARTBEAT_INTERVAL_MS);
     const handleBeforeUnload = () => {
       void removeStreamerPresence();
     };

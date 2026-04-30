@@ -24,6 +24,8 @@ export type RoomPresenceUser = {
   lastSeenAt: string;
 };
 
+const ACTIVE_PRESENCE_WINDOW_MS = 20_000;
+
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -69,10 +71,12 @@ export async function fetchRoomPresence(
 
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const supabase = supabaseClient ?? getSupabaseClient();
+    const activeSinceIso = new Date(Date.now() - ACTIVE_PRESENCE_WINDOW_MS).toISOString();
     const { data, error } = await supabase
       .from("room_presence")
       .select("id, room_id, user_id, role, joined_at, last_seen_at, profiles(display_name)")
       .eq("room_id", roomId)
+      .gte("last_seen_at", activeSinceIso)
       .order("last_seen_at", { ascending: false })
       .limit(safeLimit);
 

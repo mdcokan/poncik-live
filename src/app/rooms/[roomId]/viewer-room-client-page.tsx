@@ -6,7 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchRoomPresence, type RoomPresenceUser } from "@/lib/room-presence";
 import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
 import { fetchRoomGiftEvents, type RoomGiftEvent } from "@/lib/gift-transactions";
-import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import {
+  getSupabaseBrowserClient,
+  LIVE_ROOMS_BROADCAST_CHANNEL,
+  LIVE_ROOMS_CHANGED_EVENT,
+} from "@/lib/supabase-browser";
 
 type RoomRow = {
   id: string;
@@ -51,6 +55,15 @@ type SendGiftApiResponse = {
     sender_balance?: number;
   };
 };
+
+type LiveRoomsBroadcastPayload = {
+  action?: "started" | "stopped";
+  roomId?: string;
+  status?: "live" | "offline";
+  at?: number;
+};
+
+const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 function getStreamerName(room: RoomRow | null, profile: ProfileRow | null) {
   const profileName = profile?.display_name?.trim();
@@ -286,6 +299,29 @@ export default function ViewerRoomClientPage() {
     await supabase.from("room_presence").delete().eq("room_id", roomId).eq("user_id", state.userId);
   }, [roomId, state.userId]);
 
+  const applyRoomClosedState = useCallback(() => {
+    setState((prev) => {
+      if (!prev.room) {
+        return prev;
+      }
+      if (prev.room.status !== "live") {
+        return prev;
+      }
+      return {
+        ...prev,
+        room: {
+          ...prev.room,
+          status: "offline",
+        },
+      };
+    });
+    setChatBody("");
+    setMessages([]);
+    setPresenceUsers([]);
+    setGiftEvents([]);
+    latestGiftEventIdRef.current = null;
+  }, []);
+
   useEffect(() => {
     if (!roomId) {
       setState((prev) => ({
@@ -419,7 +455,20 @@ export default function ViewerRoomClientPage() {
           table: "rooms",
           filter: `id=eq.${roomId}`,
         },
-        () => {
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            setState((prev) => ({ ...prev, room: null }));
+            return;
+          }
+
+          const nextStatus =
+            payload.eventType === "UPDATE"
+              ? ((payload.new ?? null) as { status?: string } | null)?.status
+              : null;
+          if (nextStatus && nextStatus !== "live") {
+            applyRoomClosedState();
+            return;
+          }
           void refreshRoomState();
         },
       )
@@ -429,7 +478,30 @@ export default function ViewerRoomClientPage() {
       cancelled = true;
       void supabase.removeChannel(channel);
     };
-  }, [roomId]);
+  }, [applyRoomClosedState, roomId]);
+
+  useEffect(() => {
+    if (!roomId) {
+      return;
+    }
+    const supabase = getSupabaseBrowserClient();
+    const channel = supabase
+      .channel(LIVE_ROOMS_BROADCAST_CHANNEL)
+      .on("broadcast", { event: LIVE_ROOMS_CHANGED_EVENT }, ({ payload }) => {
+        const liveRoomsPayload = (payload ?? null) as LiveRoomsBroadcastPayload | null;
+        if (!liveRoomsPayload) {
+          return;
+        }
+        if (liveRoomsPayload.action === "stopped" && liveRoomsPayload.roomId === roomId) {
+          applyRoomClosedState();
+        }
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [applyRoomClosedState, roomId]);
 
   useEffect(() => {
     if (!roomId || !isLive) {
@@ -448,7 +520,7 @@ export default function ViewerRoomClientPage() {
   }, [isLive, refreshPresence, roomId]);
 
   useEffect(() => {
-    if (!roomId) {
+    if (!roomId || !isLive) {
       return;
     }
 
@@ -476,10 +548,10 @@ export default function ViewerRoomClientPage() {
       }
       void supabase.removeChannel(channel);
     };
-  }, [roomId, scheduleRefreshMessages]);
+  }, [isLive, roomId, scheduleRefreshMessages]);
 
   useEffect(() => {
-    if (!roomId) {
+    if (!roomId || !isLive) {
       return;
     }
 
@@ -507,7 +579,7 @@ export default function ViewerRoomClientPage() {
       }
       void supabase.removeChannel(channel);
     };
-  }, [roomId, scheduleRefreshPresence]);
+  }, [isLive, roomId, scheduleRefreshPresence]);
 
   useEffect(() => {
     if (!roomId || !isLive || !state.isLoggedIn || !state.userId) {
@@ -517,7 +589,7 @@ export default function ViewerRoomClientPage() {
     void upsertOwnPresence();
     const heartbeatTimer = setInterval(() => {
       void upsertOwnPresence();
-    }, 25000);
+    }, PRESENCE_HEARTBEAT_INTERVAL_MS);
     const handleBeforeUnload = () => {
       void removeOwnPresence();
     };
