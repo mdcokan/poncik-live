@@ -35,6 +35,8 @@ type GiftCatalogItem = {
   sortOrder: number;
 };
 
+type ModerationAction = "mute" | "unmute" | "kick" | "ban" | "unban";
+
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 function getPresenceRoleLabel(role: string) {
@@ -86,12 +88,15 @@ export default function StudioPage() {
   const [chatSending, setChatSending] = useState(false);
   const [chatRefreshing, setChatRefreshing] = useState(false);
   const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUser[]>([]);
+  const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(new Set());
   const [giftCatalog, setGiftCatalog] = useState<GiftCatalogItem[]>([]);
   const [isGiftCatalogLoading, setIsGiftCatalogLoading] = useState(false);
   const [hasGiftCatalogLoaded, setHasGiftCatalogLoaded] = useState(false);
   const [giftEvents, setGiftEvents] = useState<RoomGiftEvent[]>([]);
   const [giftOverlayText, setGiftOverlayText] = useState<string | null>(null);
   const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
+  const [moderationBusyUserId, setModerationBusyUserId] = useState<string | null>(null);
+  const [moderationFeedback, setModerationFeedback] = useState<string | null>(null);
   const [chatIdentity, setChatIdentity] = useState<{ userId: string | null; displayName: string | null }>({
     userId: null,
     displayName: null,
@@ -265,8 +270,17 @@ export default function StudioPage() {
     }
 
     const supabase = getSupabase();
-    const fetchedPresence = await fetchRoomPresenceFromApi(activeRoom.id, supabase, 100);
+    const [fetchedPresence, roomMutes] = await Promise.all([
+      fetchRoomPresenceFromApi(activeRoom.id, supabase, 100),
+      supabase.from("room_mutes").select("user_id").eq("room_id", activeRoom.id),
+    ]);
     setPresenceUsers(fetchedPresence);
+    const nextMutedUserIds = new Set(
+      (roomMutes.data ?? [])
+        .map((row) => (row as { user_id?: string }).user_id)
+        .filter((userId): userId is string => Boolean(userId)),
+    );
+    setMutedUserIds(nextMutedUserIds);
   }, [activeRoom?.id, activeRoom?.status]);
 
   const scheduleRefreshPresence = useCallback(
@@ -684,6 +698,70 @@ export default function StudioPage() {
       scheduleRefreshMessages(120);
     } finally {
       setChatSending(false);
+    }
+  }
+
+  async function moderateRoomUser(targetUserId: string, action: ModerationAction, reason?: string) {
+    if (!activeRoom?.id || !targetUserId) {
+      return;
+    }
+
+    setModerationFeedback(null);
+    setModerationBusyUserId(targetUserId);
+    try {
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setModerationFeedback("Giriş doğrulaması yapılamadı.");
+        return;
+      }
+
+      const response = await fetch(`/api/rooms/${activeRoom.id}/moderation`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ targetUserId, action, reason }),
+        cache: "no-store",
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (!response.ok || !payload.ok) {
+        setModerationFeedback(payload.message || "Moderasyon işlemi tamamlanamadı.");
+        return;
+      }
+
+      if (action === "mute") {
+        setMutedUserIds((prev) => new Set(prev).add(targetUserId));
+      } else if (action === "unmute") {
+        setMutedUserIds((prev) => {
+          const next = new Set(prev);
+          next.delete(targetUserId);
+          return next;
+        });
+      }
+
+      if (action === "mute") {
+        setModerationFeedback("Kullanıcı susturuldu.");
+      } else if (action === "unmute") {
+        setModerationFeedback("Kullanıcının susturması kaldırıldı.");
+      } else if (action === "kick") {
+        setModerationFeedback("Kullanıcı odadan çıkarıldı.");
+      } else if (action === "ban") {
+        setModerationFeedback("Kullanıcıya oda banı uygulandı.");
+      } else if (action === "unban") {
+        setModerationFeedback("Kullanıcının oda banı kaldırıldı.");
+      }
+
+      void refreshPresence();
+    } catch {
+      setModerationFeedback("Moderasyon işlemi tamamlanamadı.");
+    } finally {
+      setModerationBusyUserId(null);
     }
   }
 
@@ -1209,6 +1287,43 @@ export default function StudioPage() {
                             </span>
                           </div>
                           <p className="mt-1 text-xs text-zinc-500">Son gorulme: {formatSeenText(presenceUser.lastSeenAt)}</p>
+                          {presenceUser.userId !== ownerId && presenceUser.role !== "streamer" ? (
+                            <div className="mt-2 flex flex-wrap gap-1.5" data-testid={`presence-actions-${presenceUser.userId}`}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void moderateRoomUser(
+                                    presenceUser.userId,
+                                    mutedUserIds.has(presenceUser.userId) ? "unmute" : "mute",
+                                  );
+                                }}
+                                disabled={moderationBusyUserId === presenceUser.userId}
+                                className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 disabled:opacity-60"
+                              >
+                                {mutedUserIds.has(presenceUser.userId) ? "Susturmayı Kaldır" : "Sustur"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void moderateRoomUser(presenceUser.userId, "kick");
+                                }}
+                                disabled={moderationBusyUserId === presenceUser.userId}
+                                className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 disabled:opacity-60"
+                              >
+                                Odadan Çıkar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void moderateRoomUser(presenceUser.userId, "ban");
+                                }}
+                                disabled={moderationBusyUserId === presenceUser.userId}
+                                className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 disabled:opacity-60"
+                              >
+                                Oda Banı
+                              </button>
+                            </div>
+                          ) : null}
                         </article>
                       ))}
                     </div>
@@ -1218,6 +1333,7 @@ export default function StudioPage() {
                       Odadakiler listesine katilim dogrulanamadi. ({presenceErrorMessage})
                     </p>
                   ) : null}
+                  {moderationFeedback ? <p className="mt-2 text-xs text-zinc-600">{moderationFeedback}</p> : null}
                 </section>
                 {roomMessages.length === 0 ? (
                   <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">

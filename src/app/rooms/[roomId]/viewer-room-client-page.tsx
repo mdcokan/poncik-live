@@ -77,6 +77,10 @@ type PublicRoomStateResponse = {
   isLive: boolean;
 };
 
+type RoomModerationRow = {
+  id: string;
+};
+
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 function getStreamerName(room: RoomRow | null, profile: ProfileRow | null) {
@@ -171,6 +175,10 @@ export default function ViewerRoomClientPage() {
   const [giftFeedback, setGiftFeedback] = useState<string | null>(null);
   const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
   const [isViewerBanned, setIsViewerBanned] = useState(false);
+  const [isRoomBanned, setIsRoomBanned] = useState(false);
+  const [isRoomMuted, setIsRoomMuted] = useState(false);
+  const [isRoomKicked, setIsRoomKicked] = useState(false);
+  const [moderationMessage, setModerationMessage] = useState<string | null>(null);
   const [giftEvents, setGiftEvents] = useState<RoomGiftEvent[]>([]);
   const [giftOverlayText, setGiftOverlayText] = useState<string | null>(null);
   const messageIdsRef = useRef(new Set<string>());
@@ -181,8 +189,8 @@ export default function ViewerRoomClientPage() {
   const latestGiftEventIdRef = useRef<string | null>(null);
 
   const isLive = state.room?.status === "live";
-  const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending;
-  const isGiftSendDisabled = !state.isLoggedIn || !isLive || isViewerBanned || Boolean(pendingGiftId);
+  const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending || isRoomMuted || isRoomBanned || isRoomKicked;
+  const isGiftSendDisabled = !state.isLoggedIn || !isLive || isViewerBanned || isRoomBanned || isRoomKicked || Boolean(pendingGiftId);
 
   function getGiftMinuteCost(gift: GiftCatalogItem) {
     return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
@@ -304,8 +312,40 @@ export default function ViewerRoomClientPage() {
     [],
   );
 
-  const upsertOwnPresence = useCallback(async () => {
+  const refreshModerationState = useCallback(async () => {
     if (!roomId || !state.userId || !isLive) {
+      setIsRoomMuted(false);
+      setIsRoomBanned(false);
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const [{ data: roomBan }, { data: roomMute }] = await Promise.all([
+      supabase
+        .from("room_bans")
+        .select("id")
+        .eq("room_id", roomId)
+        .eq("user_id", state.userId)
+        .maybeSingle<RoomModerationRow>(),
+      supabase
+        .from("room_mutes")
+        .select("id")
+        .eq("room_id", roomId)
+        .eq("user_id", state.userId)
+        .maybeSingle<RoomModerationRow>(),
+    ]);
+
+    const nextBanned = Boolean(roomBan?.id);
+    const nextMuted = Boolean(roomMute?.id);
+    setIsRoomBanned(nextBanned);
+    setIsRoomMuted(nextMuted);
+    if (nextBanned) {
+      setModerationMessage("Bu odaya girişiniz engellenmiştir.");
+    }
+  }, [isLive, roomId, state.userId]);
+
+  const upsertOwnPresence = useCallback(async () => {
+    if (!roomId || !state.userId || !isLive || isRoomBanned || isRoomKicked) {
       return;
     }
 
@@ -323,7 +363,7 @@ export default function ViewerRoomClientPage() {
       return;
     }
     setPresenceErrorMessage(null);
-  }, [isLive, roomId, state.userId]);
+  }, [isLive, isRoomBanned, isRoomKicked, roomId, state.userId]);
 
   const removeOwnPresence = useCallback(async () => {
     if (!roomId || !state.userId) {
@@ -638,7 +678,81 @@ export default function ViewerRoomClientPage() {
   }, [isLive, roomId, scheduleRefreshPresence]);
 
   useEffect(() => {
-    if (!roomId || !isLive || !state.isLoggedIn || !state.userId) {
+    if (!roomId || !isLive || !state.userId) {
+      return;
+    }
+    void refreshModerationState();
+  }, [isLive, refreshModerationState, roomId, state.userId]);
+
+  useEffect(() => {
+    if (!roomId || !isLive || !state.userId) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const bansChannel = supabase
+      .channel(`public:room-bans:${roomId}:${state.userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "room_bans", filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const row = (payload.new ?? payload.old ?? null) as { user_id?: string } | null;
+          if (row?.user_id !== state.userId) {
+            return;
+          }
+          if (payload.eventType === "DELETE") {
+            setIsRoomBanned(false);
+            setModerationMessage("Oda banınız kaldırıldı.");
+          } else {
+            setIsRoomBanned(true);
+            setModerationMessage("Bu odaya girişiniz engellenmiştir.");
+            void removeOwnPresence();
+          }
+        },
+      )
+      .subscribe();
+
+    const mutesChannel = supabase
+      .channel(`public:room-mutes:${roomId}:${state.userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "room_mutes", filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const row = (payload.new ?? payload.old ?? null) as { user_id?: string } | null;
+          if (row?.user_id !== state.userId) {
+            return;
+          }
+          setIsRoomMuted(payload.eventType !== "DELETE");
+        },
+      )
+      .subscribe();
+
+    const kicksChannel = supabase
+      .channel(`public:room-kicks:${roomId}:${state.userId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "room_kicks", filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const row = (payload.new ?? null) as { user_id?: string } | null;
+          if (row?.user_id !== state.userId) {
+            return;
+          }
+          setIsRoomKicked(true);
+          setModerationMessage("Odadan çıkarıldınız.");
+          void removeOwnPresence();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(bansChannel);
+      void supabase.removeChannel(mutesChannel);
+      void supabase.removeChannel(kicksChannel);
+    };
+  }, [isLive, removeOwnPresence, roomId, state.userId]);
+
+  useEffect(() => {
+    if (!roomId || !isLive || !state.isLoggedIn || !state.userId || isRoomBanned || isRoomKicked) {
       return;
     }
 
@@ -656,11 +770,11 @@ export default function ViewerRoomClientPage() {
       window.removeEventListener("beforeunload", handleBeforeUnload);
       void removeOwnPresence();
     };
-  }, [isLive, removeOwnPresence, roomId, state.isLoggedIn, state.userId, upsertOwnPresence]);
+  }, [isLive, isRoomBanned, isRoomKicked, removeOwnPresence, roomId, state.isLoggedIn, state.userId, upsertOwnPresence]);
 
   async function handleSendMessage() {
     const trimmedBody = chatBody.trim();
-    if (!state.userId || !roomId || !isLive || !trimmedBody || trimmedBody.length > 500 || isSending) {
+    if (!state.userId || !roomId || !isLive || !trimmedBody || trimmedBody.length > 500 || isSending || isRoomMuted || isRoomBanned || isRoomKicked) {
       return;
     }
 
@@ -875,6 +989,15 @@ export default function ViewerRoomClientPage() {
       <RoomInfoState
         title="Bu yayin su an kapali"
         description="Yayinci yayini sonlandirdi. Yeni canli yayinlarda tekrar gorusebiliriz."
+      />
+    );
+  }
+
+  if (isRoomBanned) {
+    return (
+      <RoomInfoState
+        title="Bu odaya girişiniz engellenmiştir."
+        description={moderationMessage || "Yayıncı bu oda için erişiminizi kapattı."}
       />
     );
   }
@@ -1143,6 +1266,12 @@ export default function ViewerRoomClientPage() {
             </div>
             {activeTab === "chat" && !isLive ? (
               <p className="mt-2 text-xs text-zinc-500">Yayin kapaliyken mesaj gonderilemez.</p>
+            ) : null}
+            {activeTab === "chat" && isRoomMuted ? (
+              <p className="mt-2 text-xs text-rose-600">Bu odada mesaj yazmanız geçici olarak kapatılmıştır.</p>
+            ) : null}
+            {activeTab === "chat" && isRoomKicked ? (
+              <p className="mt-2 text-xs text-rose-600">{moderationMessage || "Odadan çıkarıldınız."}</p>
             ) : null}
             {activeTab === "chat" && chatValidationError ? <p className="mt-2 text-xs text-rose-600">{chatValidationError}</p> : null}
             {activeTab === "gift" && state.isLoggedIn ? (
