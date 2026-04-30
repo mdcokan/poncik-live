@@ -113,6 +113,15 @@ export async function GET(request: Request) {
     return noStoreJson({ ok: false, message: "Giriş yapmalısın." }, { status: 401 });
   }
 
+  const { data: profile } = await clientResult.supabase
+    .from("profiles")
+    .select("is_banned")
+    .eq("id", user.id)
+    .maybeSingle<{ is_banned: boolean }>();
+  if (profile?.is_banned) {
+    return noStoreJson({ ok: false, message: "Hesabınız kısıtlanmıştır." }, { status: 403 });
+  }
+
   const { data, error } = await clientResult.supabase
     .from("minute_purchase_orders")
     .select("id, user_id, package_id, package_name, package_type, amount, price_try, status, admin_note, created_at, updated_at, decided_at")
@@ -143,6 +152,15 @@ export async function POST(request: Request) {
 
   if (userError || !user) {
     return noStoreJson({ ok: false, message: "Giriş yapmalısın." }, { status: 401 });
+  }
+
+  const { data: profile } = await clientResult.supabase
+    .from("profiles")
+    .select("is_banned")
+    .eq("id", user.id)
+    .maybeSingle<{ is_banned: boolean }>();
+  if (profile?.is_banned) {
+    return noStoreJson({ ok: false, message: "Hesabınız kısıtlanmıştır." }, { status: 403 });
   }
 
   let payload: { packageId?: unknown } = {};

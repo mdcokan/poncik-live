@@ -31,6 +31,15 @@ export type LiveRoomsResult = {
   hasError: boolean;
 };
 
+export type PublicRoomState = {
+  id: string;
+  title: string | null;
+  status: string;
+  ownerId: string;
+  streamerName: string;
+  isLive: boolean;
+};
+
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -51,7 +60,7 @@ function getSupabaseClient() {
   });
 }
 
-function resolveStreamerName(room: RoomRow, profile: ProfileRow | undefined) {
+function resolveStreamerName(room: Pick<RoomRow, "title">, profile: Pick<ProfileRow, "display_name"> | undefined) {
   const profileName = profile?.display_name?.trim();
   const roomTitle = room.title?.trim();
   return profileName || roomTitle || "Yayinci";
@@ -110,6 +119,38 @@ export async function fetchLiveRooms(limit = 24): Promise<LiveRoomsResult> {
   } catch {
     return { rooms: [], hasError: true };
   }
+}
+
+export async function fetchPublicRoomState(roomId: string): Promise<PublicRoomState | null> {
+  if (!roomId) {
+    return null;
+  }
+
+  const supabase = getSupabaseClient();
+  const { data: roomData, error: roomError } = await supabase
+    .from("rooms")
+    .select("id, title, status, owner_id")
+    .eq("id", roomId)
+    .maybeSingle();
+
+  if (roomError || !roomData) {
+    return null;
+  }
+
+  const { data: ownerProfileData } = await supabase
+    .from("profiles")
+    .select("display_name")
+    .eq("id", roomData.owner_id)
+    .maybeSingle();
+
+  return {
+    id: roomData.id,
+    title: roomData.title,
+    status: roomData.status,
+    ownerId: roomData.owner_id,
+    streamerName: resolveStreamerName(roomData, ownerProfileData ?? undefined),
+    isLive: roomData.status === "live",
+  };
 }
 
 export function formatUpdatedAtShort(value: string | null) {

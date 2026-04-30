@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -147,8 +148,9 @@ async function loginWithDiagnostics(
   }
 }
 
-test("live room card appears and disappears without member refresh", async ({ browser }, testInfo) => {
+test("live room card appears and disappears without member refresh", async ({ browser, request }, testInfo) => {
   test.setTimeout(90_000);
+  await normalizeTestFixtures(request);
   const streamerContext = await browser.newContext();
   const memberContext = await browser.newContext();
   const streamerPage = await streamerContext.newPage();

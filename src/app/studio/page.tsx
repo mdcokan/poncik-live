@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchRoomPresence, type RoomPresenceUser } from "@/lib/room-presence";
+import {
+  fetchRoomPresenceFromApi,
+  removeRoomPresence,
+  type RoomPresenceUser,
+  upsertRoomPresence,
+} from "@/lib/room-presence";
 import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
 import { fetchRoomGiftEvents, type RoomGiftEvent } from "@/lib/gift-transactions";
 import {
@@ -66,6 +71,7 @@ export default function StudioPage() {
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [isBanned, setIsBanned] = useState(false);
   const [activeRoom, setActiveRoom] = useState<StudioRoom | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [mutedStart, setMutedStart] = useState(false);
@@ -85,6 +91,7 @@ export default function StudioPage() {
   const [hasGiftCatalogLoaded, setHasGiftCatalogLoaded] = useState(false);
   const [giftEvents, setGiftEvents] = useState<RoomGiftEvent[]>([]);
   const [giftOverlayText, setGiftOverlayText] = useState<string | null>(null);
+  const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
   const [chatIdentity, setChatIdentity] = useState<{ userId: string | null; displayName: string | null }>({
     userId: null,
     displayName: null,
@@ -127,7 +134,7 @@ export default function StudioPage() {
 
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
-          .select("display_name, role")
+          .select("display_name, role, is_banned")
           .eq("id", user.id)
           .single();
 
@@ -137,12 +144,20 @@ export default function StudioPage() {
 
         const finalDisplayName = profile?.display_name ?? user.email?.split("@")[0] ?? "Yayıncı";
         const finalRole = profile?.role ?? "viewer";
+        const finalIsBanned = profile?.is_banned === true;
         setDisplayName(finalDisplayName);
         setChatIdentity({
           userId: user.id,
           displayName: finalDisplayName,
         });
         setRole(finalRole);
+        setIsBanned(finalIsBanned);
+
+        if (finalIsBanned) {
+          setStatus("error");
+          setMessage("Hesabınız kısıtlandığı için yayın başlatamazsınız.");
+          return;
+        }
 
         if (finalRole !== "streamer") {
           return;
@@ -250,7 +265,7 @@ export default function StudioPage() {
     }
 
     const supabase = getSupabase();
-    const fetchedPresence = await fetchRoomPresence(activeRoom.id, 100, supabase);
+    const fetchedPresence = await fetchRoomPresenceFromApi(activeRoom.id, supabase, 100);
     setPresenceUsers(fetchedPresence);
   }, [activeRoom?.id, activeRoom?.status]);
 
@@ -283,17 +298,19 @@ export default function StudioPage() {
     }
 
     const supabase = getSupabase();
-    await supabase.from("room_presence").upsert(
+    const result = await upsertRoomPresence(
       {
-        room_id: activeRoom.id,
-        user_id: ownerId,
+        roomId: activeRoom.id,
+        userId: ownerId,
         role: "streamer",
-        last_seen_at: new Date().toISOString(),
       },
-      {
-        onConflict: "room_id,user_id",
-      },
+      supabase,
     );
+    if (!result.ok) {
+      setPresenceErrorMessage(result.errorMessage || "Odadakiler listesine katilim dogrulanamadi.");
+      return;
+    }
+    setPresenceErrorMessage(null);
   }, [activeRoom?.id, activeRoom?.status, ownerId]);
 
   const removeStreamerPresence = useCallback(async () => {
@@ -302,10 +319,25 @@ export default function StudioPage() {
     }
 
     const supabase = getSupabase();
-    await supabase.from("room_presence").delete().eq("room_id", activeRoom.id).eq("user_id", ownerId);
+    const result = await removeRoomPresence(
+      {
+        roomId: activeRoom.id,
+        userId: ownerId,
+      },
+      supabase,
+    );
+    if (!result.ok) {
+      setPresenceErrorMessage(result.errorMessage || "Odadakiler kaydi kaldirilamadi.");
+    }
   }, [activeRoom?.id, ownerId]);
 
   async function handleStartLive() {
+    if (isBanned) {
+      setStatus("error");
+      setMessage("Hesabınız kısıtlandığı için yayın başlatamazsınız.");
+      return;
+    }
+
     if (!ownerId || role !== "streamer") {
       setStatus("error");
       setMessage("Bu alan sadece yayıncılar içindir.");
@@ -496,6 +528,7 @@ export default function StudioPage() {
   const streamTitle = activeRoom?.title || displayName || "Yayıncı";
   const isBusy = loadingUser || status === "loading";
   const isStreamer = role === "streamer";
+  const isRestricted = isBanned;
 
   useEffect(() => {
     if (isLive) {
@@ -612,6 +645,7 @@ export default function StudioPage() {
       !roomId ||
       activeRoom?.status !== "live" ||
       !chatIdentity.userId ||
+      isRestricted ||
       !trimmedBody ||
       trimmedBody.length > 500 ||
       chatSending
@@ -853,6 +887,9 @@ export default function StudioPage() {
                   Yayıncı masası
                 </span>
                 <span className="rounded-full bg-pink-100 px-3 py-1 text-[11px] font-semibold text-pink-600">Poncik tone</span>
+                {isRestricted ? (
+                  <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">Hesap kısıtlı</span>
+                ) : null}
                 {isLive ? (
                   <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">CANLI</span>
                 ) : null}
@@ -923,7 +960,7 @@ export default function StudioPage() {
                   <button
                     type="button"
                     onClick={handleStopLive}
-                    disabled={isBusy || !isStreamer}
+                    disabled={isBusy || !isStreamer || isRestricted}
                     className="rounded-xl bg-rose-500 px-4 py-2 text-xs font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {status === "loading" ? "Yayın kapatılıyor..." : "YAYINI BİTİR"}
@@ -990,7 +1027,7 @@ export default function StudioPage() {
                     <button
                       type="button"
                       onClick={handleStartLive}
-                      disabled={isBusy || !isStreamer}
+                    disabled={isBusy || !isStreamer || isRestricted}
                       className="mt-3 w-full rounded-2xl bg-emerald-400 px-5 py-2.5 text-sm font-black text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                     >
                       {status === "loading" ? "Yayın başlatılıyor..." : "YAYINA BAŞLA"}
@@ -1125,14 +1162,18 @@ export default function StudioPage() {
                       </article>
                     ))}
                   </div>
-                  <section className="rounded-2xl border border-pink-100 bg-white p-3">
+                  <section className="rounded-2xl border border-pink-100 bg-white p-3" data-testid="studio-gift-panel">
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Son hediyeler</p>
                     {giftEvents.length === 0 ? (
                       <p className="mt-2 text-sm text-zinc-500">Bu yayinda henuz hediye yok.</p>
                     ) : (
                       <div className="mt-3 space-y-2">
                         {giftEvents.map((event) => (
-                          <article key={event.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2">
+                          <article
+                            key={event.id}
+                            className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2"
+                            data-testid="studio-gift-event"
+                          >
                             <p className="text-sm text-zinc-700">
                               <span className="font-semibold text-zinc-900">{event.senderName}</span> {event.giftEmoji} {event.giftName} gonderdi ·{" "}
                               {event.amount} dk
@@ -1146,7 +1187,7 @@ export default function StudioPage() {
               )
             ) : (
               <div>
-                <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3">
+                <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
                     <span className="rounded-full bg-pink-100 px-2.5 py-1 text-xs font-bold text-pink-700">{presenceUsers.length}</span>
@@ -1156,7 +1197,11 @@ export default function StudioPage() {
                   ) : (
                     <div className="mt-3 space-y-2">
                       {presenceUsers.map((presenceUser) => (
-                        <article key={presenceUser.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2">
+                        <article
+                          key={presenceUser.id}
+                          className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2"
+                          data-testid="room-presence-user"
+                        >
                           <div className="flex items-center justify-between gap-3">
                             <p className="truncate text-sm font-semibold text-zinc-800">{presenceUser.displayName}</p>
                             <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold text-zinc-700">
@@ -1168,6 +1213,11 @@ export default function StudioPage() {
                       ))}
                     </div>
                   )}
+                  {presenceErrorMessage ? (
+                    <p className="mt-2 text-xs text-rose-600" data-testid="room-presence-error">
+                      Odadakiler listesine katilim dogrulanamadi. ({presenceErrorMessage})
+                    </p>
+                  ) : null}
                 </section>
                 {roomMessages.length === 0 ? (
                   <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
@@ -1210,7 +1260,7 @@ export default function StudioPage() {
                     void handleSendChatMessage();
                   }
                 }}
-                disabled={activeTab !== "chat" || !isLive || chatSending}
+                disabled={activeTab !== "chat" || !isLive || chatSending || isRestricted}
                 placeholder="Mesajınızı buraya yazınız..."
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500"
               />
@@ -1219,12 +1269,17 @@ export default function StudioPage() {
                 onClick={() => {
                   void handleSendChatMessage();
                 }}
-                disabled={activeTab !== "chat" || !isLive || chatSending || !chatBody.trim() || chatBody.trim().length > 500}
+                disabled={
+                  activeTab !== "chat" || !isLive || chatSending || isRestricted || !chatBody.trim() || chatBody.trim().length > 500
+                }
                 className="inline-flex rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm disabled:opacity-60"
               >
                 {chatSending ? "..." : "Gonder"}
               </button>
             </div>
+            {isRestricted ? (
+              <p className="mt-2 text-xs text-rose-600">Hesabınız kısıtlandığı için sohbet ve yayın işlemleri kapalıdır.</p>
+            ) : null}
             {!isLive && activeTab === "chat" ? (
               <p className="mt-2 text-xs text-zinc-500">Yayin kapaliyken mesaj gonderilemez.</p>
             ) : null}

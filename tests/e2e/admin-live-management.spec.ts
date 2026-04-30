@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -42,8 +43,9 @@ async function login(
   await page.waitForURL(opts.successUrl, { timeout: 20_000 });
 }
 
-test("admin canlı yayınları görüp yayını kapatabilir", async ({ browser }) => {
+test("admin canlı yayınları görüp yayını kapatabilir", async ({ browser, request }) => {
   test.setTimeout(180_000);
+  await normalizeTestFixtures(request);
 
   const streamerContext = await browser.newContext();
   const memberContext = await browser.newContext();

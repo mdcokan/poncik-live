@@ -40,6 +40,7 @@ function getSupabaseClient() {
 
 export default function StreamerPage() {
   const [errorMessage, setErrorMessage] = useState("");
+  const [isBanned, setIsBanned] = useState(false);
   const [streamerId, setStreamerId] = useState<string | null>(null);
   const [todayGiftTotal, setTodayGiftTotal] = useState(0);
   const [overallGiftTotal, setOverallGiftTotal] = useState(0);
@@ -63,9 +64,11 @@ export default function StreamerPage() {
 
         const { data: profile } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role, is_banned")
           .eq("id", user.id)
-          .single<{ role: UserRole }>();
+          .single<{ role: UserRole; is_banned: boolean }>();
+
+        setIsBanned(profile?.is_banned === true);
 
         if (profile?.role === "viewer") {
           window.location.href = "/member";
@@ -160,15 +163,21 @@ export default function StreamerPage() {
             Yayinci Paneli
           </h2>
           <nav className="mt-3 space-y-2">
-            {menuItems.map((item) => (
-              <Link
-                key={item.label}
-                href={item.href}
-                className="block rounded-2xl bg-white/10 px-4 py-2.5 text-sm transition hover:bg-white/20"
-              >
-                {item.label}
-              </Link>
-            ))}
+            {menuItems.map((item) =>
+              item.href === "/studio" && isBanned ? (
+                <span key={item.label} className="block cursor-not-allowed rounded-2xl bg-white/10 px-4 py-2.5 text-sm opacity-60">
+                  {item.label}
+                </span>
+              ) : (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className="block rounded-2xl bg-white/10 px-4 py-2.5 text-sm transition hover:bg-white/20"
+                >
+                  {item.label}
+                </Link>
+              ),
+            )}
           </nav>
           <button
             type="button"
@@ -193,6 +202,11 @@ export default function StreamerPage() {
           {errorMessage ? (
             <p className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
               {errorMessage}
+            </p>
+          ) : null}
+          {isBanned ? (
+            <p className="rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              Hesabınız kısıtlanmıştır. Yayın başlatma gibi kritik işlemler kapatılmıştır.
             </p>
           ) : null}
 

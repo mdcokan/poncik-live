@@ -77,6 +77,7 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
   const [isOrdersLoading, setIsOrdersLoading] = useState(false);
   const [packages, setPackages] = useState<PurchasePackage[]>([]);
   const [hasLoadedPackages, setHasLoadedPackages] = useState(false);
+  const [isBanned, setIsBanned] = useState(false);
   const walletBalance = useWalletBalance({ initialBalance: 0 });
   const { rooms: liveRooms, warning: liveRoomsWarning } = useRealtimeLiveRooms({
     initialRooms: safeInitialRooms,
@@ -98,6 +99,9 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
           window.location.href = "/login";
           return;
         }
+
+        const { data: profile } = await supabase.from("profiles").select("is_banned").eq("id", user.id).maybeSingle<{ is_banned: boolean }>();
+        setIsBanned(profile?.is_banned === true);
 
       } catch {
         setErrorMessage("Hesap kontrolu su an yapilamadi.");
@@ -194,6 +198,11 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
   }
 
   async function handleCreateOrder(item: PurchasePackage) {
+    if (isBanned) {
+      setPurchaseInfoMessage("Hesabınız kısıtlanmıştır.");
+      return;
+    }
+
     try {
       setIsSubmittingPackageId(item.id);
       setPurchaseInfoMessage("");
@@ -289,6 +298,7 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                 type="button"
                 data-testid="open-member-packages"
                 onClick={() => void handleOpenPackages()}
+                disabled={isBanned}
                 className="rounded-full bg-pink-400 px-3 py-1 text-xs font-semibold text-white transition hover:bg-pink-300"
               >
                 Dakika Yükle
@@ -299,6 +309,11 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
           {errorMessage ? (
             <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
               {errorMessage}
+            </p>
+          ) : null}
+          {isBanned ? (
+            <p className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              Hesabınız kısıtlanmıştır. Kritik işlemler geçici olarak kapatılmıştır.
             </p>
           ) : null}
 
@@ -317,7 +332,9 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                   <Link
                     key={room.id}
                     href={`/rooms/${room.id}`}
-                    className="block min-w-[160px] rounded-2xl bg-cyan-50 p-3 transition hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    className={`block min-w-[160px] rounded-2xl bg-cyan-50 p-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                      isBanned ? "pointer-events-none opacity-60" : "hover:bg-cyan-100"
+                    }`}
                   >
                     <div className="h-14 w-14 rounded-full bg-gradient-to-br from-pink-300 to-violet-400" />
                     <p className="mt-3 text-sm font-semibold">{room.streamerName}</p>
@@ -344,7 +361,9 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                   <Link
                     key={room.id}
                     href={`/rooms/${room.id}`}
-                    className="block rounded-2xl bg-cyan-50 p-3 transition hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    className={`block rounded-2xl bg-cyan-50 p-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                      isBanned ? "pointer-events-none opacity-60" : "hover:bg-cyan-100"
+                    }`}
                   >
                     <div className="h-16 rounded-xl bg-gradient-to-br from-indigo-300 to-pink-300" />
                     <p className="mt-3 text-sm font-semibold">{room.streamerName}</p>
@@ -415,7 +434,7 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                       <p className="mt-1 text-sm text-slate-700">Fiyat: {item.price_try} TL</p>
                       <button
                         type="button"
-                        disabled={isSubmittingPackageId === item.id}
+                        disabled={isSubmittingPackageId === item.id || isBanned}
                         className="mt-4 rounded-xl bg-pink-400 px-3 py-2 text-xs font-semibold text-white transition hover:bg-pink-300"
                         onClick={() => void handleCreateOrder(item)}
                       >

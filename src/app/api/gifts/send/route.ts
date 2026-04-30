@@ -106,6 +106,20 @@ export async function POST(request: Request) {
     },
   });
 
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+  if (userError || !user) {
+    const errorConfig = ERROR_BY_CODE.AUTH_REQUIRED;
+    return noStoreJson({ ok: false, code: "AUTH_REQUIRED", message: errorConfig.message }, { status: errorConfig.status });
+  }
+
+  const { data: profile } = await supabase.from("profiles").select("is_banned").eq("id", user.id).maybeSingle<{ is_banned: boolean }>();
+  if (profile?.is_banned) {
+    return noStoreJson({ ok: false, code: "ACCOUNT_BANNED", message: "Hesabınız kısıtlanmıştır." }, { status: 403 });
+  }
+
   const { data, error } = await supabase.rpc("send_room_gift", {
     p_room_id: roomId,
     p_gift_id: giftId,

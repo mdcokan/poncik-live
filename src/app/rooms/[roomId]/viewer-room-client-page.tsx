@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchRoomPresence, type RoomPresenceUser } from "@/lib/room-presence";
+import {
+  fetchRoomPresenceFromApi,
+  removeRoomPresence,
+  type RoomPresenceUser,
+  upsertRoomPresence,
+} from "@/lib/room-presence";
 import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
 import { fetchRoomGiftEvents, type RoomGiftEvent } from "@/lib/gift-transactions";
 import {
@@ -61,6 +66,15 @@ type LiveRoomsBroadcastPayload = {
   roomId?: string;
   status?: "live" | "offline";
   at?: number;
+};
+
+type PublicRoomStateResponse = {
+  id: string;
+  title: string | null;
+  status: string;
+  ownerId: string;
+  streamerName: string;
+  isLive: boolean;
 };
 
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -155,6 +169,8 @@ export default function ViewerRoomClientPage() {
   const [hasGiftCatalogLoaded, setHasGiftCatalogLoaded] = useState(false);
   const [pendingGiftId, setPendingGiftId] = useState<string | null>(null);
   const [giftFeedback, setGiftFeedback] = useState<string | null>(null);
+  const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
+  const [isViewerBanned, setIsViewerBanned] = useState(false);
   const [giftEvents, setGiftEvents] = useState<RoomGiftEvent[]>([]);
   const [giftOverlayText, setGiftOverlayText] = useState<string | null>(null);
   const messageIdsRef = useRef(new Set<string>());
@@ -166,7 +182,7 @@ export default function ViewerRoomClientPage() {
 
   const isLive = state.room?.status === "live";
   const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending;
-  const isGiftSendDisabled = !state.isLoggedIn || !isLive || Boolean(pendingGiftId);
+  const isGiftSendDisabled = !state.isLoggedIn || !isLive || isViewerBanned || Boolean(pendingGiftId);
 
   function getGiftMinuteCost(gift: GiftCatalogItem) {
     return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
@@ -244,7 +260,7 @@ export default function ViewerRoomClientPage() {
     }
 
     const supabase = getSupabaseBrowserClient();
-    const fetchedPresence = await fetchRoomPresence(roomId, 100, supabase);
+    const fetchedPresence = await fetchRoomPresenceFromApi(roomId, supabase, 100);
     setPresenceUsers(fetchedPresence);
   }, [isLive, roomId]);
 
@@ -271,23 +287,42 @@ export default function ViewerRoomClientPage() {
     setGiftEvents(nextEvents);
   }, [isLive, roomId]);
 
+  const fetchRoomStateFromApi = useCallback(
+    async (targetRoomId: string): Promise<PublicRoomStateResponse | null> => {
+      const response = await fetch(`/api/rooms/${targetRoomId}/state`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          return null;
+        }
+        throw new Error(`ROOM_STATE_FETCH_FAILED_${response.status}`);
+      }
+      return (await response.json()) as PublicRoomStateResponse;
+    },
+    [],
+  );
+
   const upsertOwnPresence = useCallback(async () => {
     if (!roomId || !state.userId || !isLive) {
       return;
     }
 
     const supabase = getSupabaseBrowserClient();
-    await supabase.from("room_presence").upsert(
+    const result = await upsertRoomPresence(
       {
-        room_id: roomId,
-        user_id: state.userId,
+        roomId,
+        userId: state.userId,
         role: "viewer",
-        last_seen_at: new Date().toISOString(),
       },
-      {
-        onConflict: "room_id,user_id",
-      },
+      supabase,
     );
+    if (!result.ok) {
+      setPresenceErrorMessage(result.errorMessage || "Odadakiler listesine katilim dogrulanamadi.");
+      return;
+    }
+    setPresenceErrorMessage(null);
   }, [isLive, roomId, state.userId]);
 
   const removeOwnPresence = useCallback(async () => {
@@ -296,10 +331,22 @@ export default function ViewerRoomClientPage() {
     }
 
     const supabase = getSupabaseBrowserClient();
-    await supabase.from("room_presence").delete().eq("room_id", roomId).eq("user_id", state.userId);
+    const result = await removeRoomPresence(
+      {
+        roomId,
+        userId: state.userId,
+      },
+      supabase,
+    );
+    if (!result.ok) {
+      setPresenceErrorMessage(result.errorMessage || "Odadakiler kaydi kaldirilamadi.");
+    }
   }, [roomId, state.userId]);
 
-  const applyRoomClosedState = useCallback(() => {
+  const applyRoomClosedState = useCallback((targetRoomId?: string | null) => {
+    if (!targetRoomId || targetRoomId !== roomId) {
+      return;
+    }
     setState((prev) => {
       if (!prev.room) {
         return prev;
@@ -320,7 +367,7 @@ export default function ViewerRoomClientPage() {
     setPresenceUsers([]);
     setGiftEvents([]);
     latestGiftEventIdRef.current = null;
-  }, []);
+  }, [roomId]);
 
   useEffect(() => {
     if (!roomId) {
@@ -348,19 +395,17 @@ export default function ViewerRoomClientPage() {
         if (userId) {
           const { data: userProfileData } = await supabase
             .from("profiles")
-            .select("display_name")
+            .select("display_name, is_banned")
             .eq("id", userId)
             .maybeSingle();
           userDisplayName = userProfileData?.display_name?.trim() || userDisplayName;
+          setIsViewerBanned(userProfileData?.is_banned === true);
+        } else {
+          setIsViewerBanned(false);
         }
 
-        const { data: roomData, error: roomError } = await supabase
-          .from("rooms")
-          .select("id, title, status, owner_id")
-          .eq("id", roomId)
-          .maybeSingle();
-
-        if (roomError || !roomData) {
+        const roomState = await fetchRoomStateFromApi(roomId);
+        if (!roomState) {
           if (!cancelled) {
             setState({
               room: null,
@@ -374,16 +419,20 @@ export default function ViewerRoomClientPage() {
           return;
         }
 
-        const { data: ownerProfileData } = await supabase
-          .from("profiles")
-          .select("id, display_name, role, is_banned")
-          .eq("id", roomData.owner_id)
-          .maybeSingle();
-
         if (!cancelled) {
           setState({
-            room: roomData,
-            ownerProfile: ownerProfileData ?? null,
+            room: {
+              id: roomState.id,
+              title: roomState.title,
+              status: roomState.status,
+              owner_id: roomState.ownerId,
+            },
+            ownerProfile: {
+              id: roomState.ownerId,
+              display_name: roomState.streamerName,
+              role: "streamer",
+              is_banned: null,
+            },
             isLoggedIn: Boolean(user),
             userId,
             userDisplayName,
@@ -402,7 +451,7 @@ export default function ViewerRoomClientPage() {
     return () => {
       cancelled = true;
     };
-  }, [roomId]);
+  }, [fetchRoomStateFromApi, roomId]);
 
   useEffect(() => {
     if (!roomId) {
@@ -414,29 +463,28 @@ export default function ViewerRoomClientPage() {
 
     async function refreshRoomState() {
       try {
-        const { data: roomData, error: roomError } = await supabase
-          .from("rooms")
-          .select("id, title, status, owner_id")
-          .eq("id", roomId)
-          .maybeSingle();
-
-        if (cancelled || roomError || !roomData) {
+        const roomState = await fetchRoomStateFromApi(roomId);
+        if (cancelled || !roomState) {
           return;
         }
-
-        const { data: ownerProfileData } = await supabase
-          .from("profiles")
-          .select("id, display_name, role, is_banned")
-          .eq("id", roomData.owner_id)
-          .maybeSingle();
 
         if (!cancelled) {
           setState((prev) => ({
             ...prev,
-            room: roomData,
-            ownerProfile: ownerProfileData ?? null,
+            room: {
+              id: roomState.id,
+              title: roomState.title,
+              status: roomState.status,
+              owner_id: roomState.ownerId,
+            },
+            ownerProfile: {
+              id: roomState.ownerId,
+              display_name: roomState.streamerName,
+              role: "streamer",
+              is_banned: null,
+            },
           }));
-          if (roomData.status !== "live") {
+          if (!roomState.isLive) {
             setChatBody("");
           }
         }
@@ -456,6 +504,14 @@ export default function ViewerRoomClientPage() {
           filter: `id=eq.${roomId}`,
         },
         (payload) => {
+          const payloadRoomId =
+            payload.eventType === "DELETE"
+              ? ((payload.old ?? null) as { id?: string } | null)?.id
+              : ((payload.new ?? null) as { id?: string } | null)?.id;
+          if (!payloadRoomId || payloadRoomId !== roomId) {
+            return;
+          }
+
           if (payload.eventType === "DELETE") {
             setState((prev) => ({ ...prev, room: null }));
             return;
@@ -466,7 +522,7 @@ export default function ViewerRoomClientPage() {
               ? ((payload.new ?? null) as { status?: string } | null)?.status
               : null;
           if (nextStatus && nextStatus !== "live") {
-            applyRoomClosedState();
+            applyRoomClosedState(payloadRoomId);
             return;
           }
           void refreshRoomState();
@@ -478,7 +534,7 @@ export default function ViewerRoomClientPage() {
       cancelled = true;
       void supabase.removeChannel(channel);
     };
-  }, [applyRoomClosedState, roomId]);
+  }, [applyRoomClosedState, fetchRoomStateFromApi, roomId]);
 
   useEffect(() => {
     if (!roomId) {
@@ -492,8 +548,8 @@ export default function ViewerRoomClientPage() {
         if (!liveRoomsPayload) {
           return;
         }
-        if (liveRoomsPayload.action === "stopped" && liveRoomsPayload.roomId === roomId) {
-          applyRoomClosedState();
+        if (liveRoomsPayload.action === "stopped") {
+          applyRoomClosedState(liveRoomsPayload.roomId);
         }
       })
       .subscribe();
@@ -967,14 +1023,18 @@ export default function ViewerRoomClientPage() {
                     ))}
                   </div>
 
-                  <section className="rounded-2xl border border-pink-100 bg-white p-3">
+                  <section className="rounded-2xl border border-pink-100 bg-white p-3" data-testid="viewer-gift-panel">
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Son hediyeler</p>
                     {giftEvents.length === 0 ? (
                       <p className="mt-2 text-sm text-zinc-500">Bu odada henuz hediye yok.</p>
                     ) : (
                       <div className="mt-3 space-y-2">
                         {giftEvents.map((event) => (
-                          <article key={event.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2">
+                          <article
+                            key={event.id}
+                            className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2"
+                            data-testid="viewer-gift-event"
+                          >
                             <p className="text-sm text-zinc-700">
                               <span className="font-semibold text-zinc-900">{event.senderName}</span> {event.giftEmoji} {event.giftName} gonderdi
                             </p>
@@ -987,7 +1047,7 @@ export default function ViewerRoomClientPage() {
               )
             ) : (
               <div>
-                <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3">
+                <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
                     <span className="rounded-full bg-pink-100 px-2.5 py-1 text-xs font-bold text-pink-700">{presenceUsers.length}</span>
@@ -997,7 +1057,11 @@ export default function ViewerRoomClientPage() {
                   ) : (
                     <div className="mt-3 space-y-2">
                       {presenceUsers.map((presenceUser) => (
-                        <article key={presenceUser.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2">
+                        <article
+                          key={presenceUser.id}
+                          className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2"
+                          data-testid="room-presence-user"
+                        >
                           <div className="flex items-center justify-between gap-3">
                             <p className="truncate text-sm font-semibold text-zinc-800">{presenceUser.displayName}</p>
                             <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold text-zinc-700">
@@ -1009,6 +1073,11 @@ export default function ViewerRoomClientPage() {
                       ))}
                     </div>
                   )}
+                  {presenceErrorMessage ? (
+                    <p className="mt-2 text-xs text-rose-600" data-testid="room-presence-error">
+                      Odadakiler listesine katilim dogrulanamadi. ({presenceErrorMessage})
+                    </p>
+                  ) : null}
                 </section>
                 {messages.length === 0 ? (
                   <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">

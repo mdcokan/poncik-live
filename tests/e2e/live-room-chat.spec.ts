@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -40,8 +41,9 @@ async function login(
   await page.waitForURL(opts.successUrl, { timeout: 20_000 });
 }
 
-test("member message appears in viewer and studio without refresh", async ({ browser }) => {
+test("member message appears in viewer and studio without refresh", async ({ browser, request }) => {
   test.setTimeout(120_000);
+  await normalizeTestFixtures(request);
 
   const streamerContext = await browser.newContext();
   const memberContext = await browser.newContext();

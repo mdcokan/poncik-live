@@ -10,6 +10,9 @@ type RoomPresenceRow = {
   profiles?:
     | {
         display_name: string | null;
+      }
+    | {
+        display_name: string | null;
       }[]
     | null;
 };
@@ -22,6 +25,11 @@ export type RoomPresenceUser = {
   role: string;
   joinedAt: string;
   lastSeenAt: string;
+};
+
+export type RoomPresenceMutationResult = {
+  ok: boolean;
+  errorMessage?: string;
 };
 
 const ACTIVE_PRESENCE_WINDOW_MS = 20_000;
@@ -47,7 +55,7 @@ function getSupabaseClient() {
 }
 
 function mapPresenceRow(row: RoomPresenceRow): RoomPresenceUser {
-  const profile = Array.isArray(row.profiles) ? row.profiles[0] : null;
+  const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
   return {
     id: row.id,
     roomId: row.room_id,
@@ -57,6 +65,28 @@ function mapPresenceRow(row: RoomPresenceRow): RoomPresenceUser {
     joinedAt: row.joined_at,
     lastSeenAt: row.last_seen_at,
   };
+}
+
+type ApiPresenceUser = {
+  userId: string;
+  displayName: string | null;
+  role: string | null;
+  lastSeenAt: string;
+};
+
+type ApiPresenceResponse = {
+  users?: ApiPresenceUser[];
+};
+
+function normalizeSupabaseErrorMessage(message: string | undefined, fallback: string) {
+  const trimmed = message?.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  if (trimmed.length > 240) {
+    return `${trimmed.slice(0, 237)}...`;
+  }
+  return trimmed;
 }
 
 export async function fetchRoomPresence(
@@ -88,4 +118,121 @@ export async function fetchRoomPresence(
   } catch {
     return [];
   }
+}
+
+export async function fetchRoomPresenceFromApi(
+  roomId: string,
+  supabaseClient: SupabaseClient,
+  limit = 100,
+): Promise<RoomPresenceUser[]> {
+  if (!roomId) {
+    return [];
+  }
+
+  const safeLimit = Math.min(Math.max(limit, 1), 100);
+  const {
+    data: { session },
+  } = await supabaseClient.auth.getSession();
+  const accessToken = session?.access_token;
+  if (!accessToken) {
+    return [];
+  }
+
+  try {
+    const response = await fetch(`/api/rooms/${roomId}/presence?limit=${safeLimit}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const payload = (await response.json()) as ApiPresenceResponse;
+    const users = Array.isArray(payload.users) ? payload.users : [];
+
+    return users.map((user) => ({
+      id: user.userId,
+      roomId,
+      userId: user.userId,
+      displayName: user.displayName?.trim() || "Uye",
+      role: user.role?.trim() || "viewer",
+      joinedAt: user.lastSeenAt,
+      lastSeenAt: user.lastSeenAt,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function upsertRoomPresence(
+  params: {
+    roomId: string;
+    userId: string;
+    role: "viewer" | "streamer" | "admin";
+  },
+  supabaseClient: SupabaseClient,
+): Promise<RoomPresenceMutationResult> {
+  const { roomId, userId, role } = params;
+  if (!roomId || !userId) {
+    return { ok: false, errorMessage: "Presence istegi icin oda veya kullanici eksik." };
+  }
+
+  const { error } = await supabaseClient.from("room_presence").upsert(
+    {
+      room_id: roomId,
+      user_id: userId,
+      role,
+      last_seen_at: new Date().toISOString(),
+    },
+    {
+      onConflict: "room_id,user_id",
+    },
+  );
+
+  if (error) {
+    return {
+      ok: false,
+      errorMessage: normalizeSupabaseErrorMessage(
+        error.message,
+        "Odadakiler listesine katilim dogrulanamadi.",
+      ),
+    };
+  }
+
+  return { ok: true };
+}
+
+export async function removeRoomPresence(
+  params: {
+    roomId: string;
+    userId: string;
+  },
+  supabaseClient: SupabaseClient,
+): Promise<RoomPresenceMutationResult> {
+  const { roomId, userId } = params;
+  if (!roomId || !userId) {
+    return { ok: false, errorMessage: "Presence silme istegi icin oda veya kullanici eksik." };
+  }
+
+  const { error } = await supabaseClient
+    .from("room_presence")
+    .delete()
+    .eq("room_id", roomId)
+    .eq("user_id", userId);
+
+  if (error) {
+    return {
+      ok: false,
+      errorMessage: normalizeSupabaseErrorMessage(
+        error.message,
+        "Odadakiler kaydi kaldirilamadi.",
+      ),
+    };
+  }
+
+  return { ok: true };
 }
