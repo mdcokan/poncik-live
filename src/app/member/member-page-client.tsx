@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { LiveRoom } from "@/lib/live-rooms";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { useRealtimeLiveRooms } from "@/hooks/use-realtime-live-rooms";
+import { useWalletBalance } from "@/hooks/use-wallet-balance";
 
 const menuItems = [
   { label: "Sohbet Et", href: "#" },
@@ -24,13 +25,17 @@ type MemberPageClientProps = {
 };
 
 export default function MemberPageClient({ initialRooms, initialHasError }: MemberPageClientProps) {
+  const safeInitialRooms = initialRooms.filter((room) => room.status === "live");
   const [errorMessage, setErrorMessage] = useState("");
+  const [isAccountStatementOpen, setIsAccountStatementOpen] = useState(false);
+  const walletBalance = useWalletBalance({ initialBalance: 0 });
   const { rooms: liveRooms, warning: liveRoomsWarning } = useRealtimeLiveRooms({
-    initialRooms,
+    initialRooms: safeInitialRooms,
     initialHasError,
     limit: 24,
     channelKey: "member",
   });
+  const safeLiveRooms = liveRooms.filter((room) => room.status === "live");
 
   useEffect(() => {
     async function checkUser() {
@@ -42,7 +47,9 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
 
         if (!user) {
           window.location.href = "/login";
+          return;
         }
+
       } catch {
         setErrorMessage("Hesap kontrolu su an yapilamadi.");
       }
@@ -60,8 +67,8 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
     }
   }
 
-  const featuredStreamers = liveRooms.slice(0, 5);
-  const showEmptyState = liveRooms.length === 0;
+  const featuredStreamers = safeLiveRooms.slice(0, 5);
+  const showEmptyState = safeLiveRooms.length === 0;
 
   return (
     <main className="min-h-screen bg-cyan-100 px-4 py-4 text-slate-800 sm:px-6">
@@ -72,13 +79,24 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
           </h2>
           <nav className="mt-3 space-y-2">
             {menuItems.map((item) => (
-              <Link
-                key={item.label}
-                href={item.href}
-                className="block rounded-2xl bg-white/10 px-4 py-2.5 text-sm transition hover:bg-white/20"
-              >
-                {item.label}
-              </Link>
+              item.label === "Hesap Dokumu" ? (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => setIsAccountStatementOpen((previous) => !previous)}
+                  className="block w-full rounded-2xl bg-white/10 px-4 py-2.5 text-left text-sm transition hover:bg-white/20"
+                >
+                  {item.label}
+                </button>
+              ) : (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className="block rounded-2xl bg-white/10 px-4 py-2.5 text-sm transition hover:bg-white/20"
+                >
+                  {item.label}
+                </Link>
+              )
             ))}
           </nav>
           <button
@@ -94,11 +112,11 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
           <header className="flex items-center justify-between rounded-3xl bg-white p-4 shadow-sm sm:p-6">
             <h1 className="text-xl font-semibold text-indigo-800">Uye Ana Ekran</h1>
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">
-                0 dk
+              <span data-testid="member-wallet-balance" className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">
+                Coin bakiyem: {walletBalance} coin
               </span>
-              <button type="button" className="h-8 w-8 rounded-full bg-pink-400 text-white">
-                +
+              <button type="button" className="rounded-full bg-pink-400 px-3 py-1 text-xs font-semibold text-white">
+                Coin yukleme yakinda
               </button>
             </div>
           </header>
@@ -110,6 +128,13 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
           ) : null}
 
           <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+            {isAccountStatementOpen ? (
+              <section className="mb-4 rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
+                <h2 className="text-base font-semibold text-indigo-800">Hesap Dokumu</h2>
+                <p className="mt-2 text-sm text-slate-700">Coin bakiyem: {walletBalance} coin</p>
+                <p className="mt-1 text-xs text-slate-500">Coin yukleme ozelligi yakinda.</p>
+              </section>
+            ) : null}
             <h2 className="text-lg font-semibold text-indigo-800">Gunun Populer Yayincilari</h2>
             <div className="mt-4 flex gap-3 overflow-x-auto">
               {featuredStreamers.length > 0 ? (
@@ -140,7 +165,7 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
             <h2 className="text-lg font-semibold text-indigo-800">Online Yayincilar</h2>
             {!showEmptyState ? (
               <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-                {liveRooms.map((room) => (
+                {safeLiveRooms.map((room) => (
                   <Link
                     key={room.id}
                     href={`/rooms/${room.id}`}
