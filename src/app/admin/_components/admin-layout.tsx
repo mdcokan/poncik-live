@@ -17,7 +17,7 @@ const menuItems = [
   { label: "Yayincilar", href: "/admin/streamers" },
   { label: "Canli Yayinlar", href: "/admin/live" },
   { label: "Kazanc / Finans", href: "/admin/finance" },
-  { label: "Coin & Sure Paketleri", href: "/admin/packages" },
+  { label: "Dakika / Sure Paketleri", href: "/admin/packages" },
   { label: "Mesajlar", href: "/admin/messages" },
   { label: "Sikayetler", href: "/admin/reports" },
   { label: "Ban / Engel Yonetimi", href: "/admin/moderation" },
