@@ -103,8 +103,9 @@ test("member sees active package and hidden when package is deactivated", async 
 
     await memberPage.getByRole("button", { name: "Satın Al" }).first().click();
     await expect(memberPage.getByTestId("member-packages-purchase-message")).toHaveText(
-      "Ödeme altyapısı bir sonraki fazda bağlanacak.",
+      "Satın alma talebin alındı. Admin onayından sonra dakika bakiyene eklenecek.",
     );
+    await expect(memberPage.getByRole("heading", { name: "Son taleplerim" })).toBeVisible();
 
     await adminPage.bringToFront();
     await adminPage.goto("/admin/packages");

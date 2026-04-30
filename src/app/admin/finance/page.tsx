@@ -27,6 +27,17 @@ type ProfileDisplayRow = {
   display_name: string | null;
 };
 
+type PendingMinuteOrder = {
+  id: string;
+  userId: string;
+  userName: string;
+  packageName: string;
+  amount: number;
+  priceTry: number;
+  status: "pending";
+  createdAt: string;
+};
+
 export default function AdminFinancePage() {
   const { loading, authorized, message, signOut } = useAdminAccess();
   const [walletSummaries, setWalletSummaries] = useState<WalletSummary[]>([]);
@@ -38,6 +49,9 @@ export default function AdminFinancePage() {
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [giftNameById, setGiftNameById] = useState<Record<string, string>>({});
   const [profileNameById, setProfileNameById] = useState<Record<string, string>>({});
+  const [pendingOrders, setPendingOrders] = useState<PendingMinuteOrder[]>([]);
+  const [orderNoteById, setOrderNoteById] = useState<Record<string, string>>({});
+  const [orderSubmittingId, setOrderSubmittingId] = useState<string | null>(null);
 
   async function loadFinanceData() {
     const [summaries, adjustments] = await Promise.all([fetchAdminWalletSummaries(50), fetchAdminWalletAdjustments(50)]);
@@ -77,6 +91,29 @@ export default function AdminFinancePage() {
       nextProfileMap[profileRow.id] = profileRow.display_name?.trim() || "Uye";
     }
     setProfileNameById(nextProfileMap);
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) {
+      setPendingOrders([]);
+      return;
+    }
+
+    const pendingResponse = await fetch("/api/admin/minute-orders", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    });
+    const pendingPayload = (await pendingResponse.json()) as { ok?: boolean; orders?: PendingMinuteOrder[] };
+    if (!pendingResponse.ok || !pendingPayload.ok) {
+      setPendingOrders([]);
+      return;
+    }
+
+    setPendingOrders(pendingPayload.orders ?? []);
   }
 
   useEffect(() => {
@@ -154,6 +191,49 @@ export default function AdminFinancePage() {
       setFeedback({ type: "error", message: "Dakika duzenleme basarisiz oldu." });
     } finally {
       setSubmittingUserId(null);
+    }
+  }
+
+  async function decideOrder(orderId: string, decision: "approved" | "rejected") {
+    try {
+      setOrderSubmittingId(orderId);
+      setFeedback(null);
+      const supabase = getSupabaseClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setFeedback({ type: "error", message: "Oturum bulunamadi. Tekrar giris yap." });
+        return;
+      }
+
+      const response = await fetch("/api/admin/minute-orders/decide", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          orderId,
+          decision,
+          adminNote: orderNoteById[orderId]?.trim() || null,
+        }),
+      });
+
+      const payload = (await response.json()) as { ok?: boolean; message?: string };
+      if (!response.ok || !payload.ok) {
+        setFeedback({ type: "error", message: payload.message || "Talep güncellenemedi." });
+        return;
+      }
+
+      setFeedback({ type: "success", message: decision === "approved" ? "Talep onaylandı." : "Talep reddedildi." });
+      setOrderNoteById((previous) => ({ ...previous, [orderId]: "" }));
+      await loadFinanceData();
+    } catch {
+      setFeedback({ type: "error", message: "Talep güncellenemedi." });
+    } finally {
+      setOrderSubmittingId(null);
     }
   }
 
@@ -271,6 +351,58 @@ export default function AdminFinancePage() {
               ))}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className="rounded-3xl bg-white p-5 shadow-sm">
+        <h2 className="text-lg font-semibold text-indigo-800">Bekleyen dakika satın alma talepleri</h2>
+        <p className="mt-1 text-sm text-slate-500">Son 50 bekleyen talep listelenir.</p>
+        <div className="mt-4 space-y-3">
+          {pendingOrders.map((order) => (
+            <article
+              key={order.id}
+              data-testid={`pending-minute-order-${order.id}`}
+              className="rounded-2xl border border-cyan-100 p-4"
+            >
+              <p className="font-semibold text-slate-800">{order.userName}</p>
+              <p className="text-sm text-slate-600">Paket: {order.packageName}</p>
+              <p className="text-sm text-slate-600">Tutar: {order.priceTry} TL</p>
+              <p className="text-sm text-slate-600">Dakika: {order.amount} dk</p>
+              <p className="text-sm text-slate-500">Tarih: {new Date(order.createdAt).toLocaleString("tr-TR")}</p>
+              <input
+                type="text"
+                maxLength={300}
+                placeholder="Admin notu"
+                value={orderNoteById[order.id] ?? ""}
+                onChange={(event) =>
+                  setOrderNoteById((previous) => ({
+                    ...previous,
+                    [order.id]: event.target.value,
+                  }))
+                }
+                className="mt-3 w-full rounded-xl border border-cyan-200 px-3 py-2 text-sm outline-none"
+              />
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={orderSubmittingId === order.id}
+                  onClick={() => void decideOrder(order.id, "approved")}
+                  className="rounded-xl bg-emerald-100 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-200 disabled:opacity-60"
+                >
+                  Onayla
+                </button>
+                <button
+                  type="button"
+                  disabled={orderSubmittingId === order.id}
+                  onClick={() => void decideOrder(order.id, "rejected")}
+                  className="rounded-xl bg-rose-100 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-200 disabled:opacity-60"
+                >
+                  Reddet
+                </button>
+              </div>
+            </article>
+          ))}
+          {pendingOrders.length === 0 ? <p className="text-sm text-slate-500">Bekleyen talep yok.</p> : null}
         </div>
       </section>
 

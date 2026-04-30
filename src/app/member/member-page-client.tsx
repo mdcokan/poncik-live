@@ -35,8 +35,33 @@ type PurchasePackage = {
   sort_order: number;
 };
 
+type MinuteOrderStatus = "pending" | "approved" | "rejected";
+
+type MinutePurchaseOrder = {
+  id: string;
+  packageId: string;
+  packageName: string;
+  packageType: PackageType;
+  amount: number;
+  priceTry: number;
+  status: MinuteOrderStatus;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt: string | null;
+};
+
 function packageTypeLabel(type: PackageType) {
   return type === "minute" ? "Dakika" : "Sure";
+}
+
+function minuteOrderStatusLabel(status: MinuteOrderStatus) {
+  if (status === "approved") {
+    return "Onaylandı";
+  }
+  if (status === "rejected") {
+    return "Reddedildi";
+  }
+  return "Beklemede";
 }
 
 export default function MemberPageClient({ initialRooms, initialHasError }: MemberPageClientProps) {
@@ -47,6 +72,9 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
   const [isPackagesLoading, setIsPackagesLoading] = useState(false);
   const [packagesError, setPackagesError] = useState("");
   const [purchaseInfoMessage, setPurchaseInfoMessage] = useState("");
+  const [isSubmittingPackageId, setIsSubmittingPackageId] = useState<string | null>(null);
+  const [myOrders, setMyOrders] = useState<MinutePurchaseOrder[]>([]);
+  const [isOrdersLoading, setIsOrdersLoading] = useState(false);
   const [packages, setPackages] = useState<PurchasePackage[]>([]);
   const [hasLoadedPackages, setHasLoadedPackages] = useState(false);
   const walletBalance = useWalletBalance({ initialBalance: 0 });
@@ -129,12 +157,84 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
     }
   }
 
+  async function fetchAccessToken() {
+    const supabase = getSupabaseBrowserClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  }
+
+  async function loadMyOrders() {
+    setIsOrdersLoading(true);
+    try {
+      const accessToken = await fetchAccessToken();
+      if (!accessToken) {
+        setMyOrders([]);
+        return;
+      }
+
+      const response = await fetch("/api/packages/order", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as { ok?: boolean; orders?: MinutePurchaseOrder[] };
+      if (!response.ok || !payload.ok) {
+        setMyOrders([]);
+        return;
+      }
+      setMyOrders((payload.orders ?? []).slice(0, 10));
+    } catch {
+      setMyOrders([]);
+    } finally {
+      setIsOrdersLoading(false);
+    }
+  }
+
+  async function handleCreateOrder(item: PurchasePackage) {
+    try {
+      setIsSubmittingPackageId(item.id);
+      setPurchaseInfoMessage("");
+      const accessToken = await fetchAccessToken();
+      if (!accessToken) {
+        setPurchaseInfoMessage("Giriş yapmalısın.");
+        return;
+      }
+
+      const response = await fetch("/api/packages/order", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          packageId: item.id,
+        }),
+      });
+      const payload = (await response.json()) as { ok?: boolean; message?: string };
+      if (!response.ok || !payload.ok) {
+        setPurchaseInfoMessage(payload.message ?? "Satın alma talebi oluşturulamadı.");
+        return;
+      }
+
+      setPurchaseInfoMessage("Satın alma talebin alındı. Admin onayından sonra dakika bakiyene eklenecek.");
+      await loadMyOrders();
+    } catch {
+      setPurchaseInfoMessage("Satın alma talebi oluşturulamadı.");
+    } finally {
+      setIsSubmittingPackageId(null);
+    }
+  }
+
   async function handleOpenPackages() {
     setIsPackagesModalOpen(true);
     if (hasLoadedPackages) {
+      await loadMyOrders();
       return;
     }
-    await loadPackages();
+    await Promise.all([loadPackages(), loadMyOrders()]);
   }
 
   const featuredStreamers = safeLiveRooms.slice(0, 5);
@@ -315,10 +415,11 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                       <p className="mt-1 text-sm text-slate-700">Fiyat: {item.price_try} TL</p>
                       <button
                         type="button"
+                        disabled={isSubmittingPackageId === item.id}
                         className="mt-4 rounded-xl bg-pink-400 px-3 py-2 text-xs font-semibold text-white transition hover:bg-pink-300"
-                        onClick={() => setPurchaseInfoMessage("Ödeme altyapısı bir sonraki fazda bağlanacak.")}
+                        onClick={() => void handleCreateOrder(item)}
                       >
-                        Satın Al
+                        {isSubmittingPackageId === item.id ? "Gönderiliyor..." : "Satın Al"}
                       </button>
                     </article>
                   ))}
@@ -330,6 +431,27 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                   {purchaseInfoMessage}
                 </p>
               ) : null}
+
+              <section className="mt-5 rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
+                <h3 className="text-sm font-semibold text-indigo-800">Son taleplerim</h3>
+                {isOrdersLoading ? <p className="mt-2 text-sm text-slate-500">Yukleniyor...</p> : null}
+                {!isOrdersLoading && myOrders.length === 0 ? (
+                  <p className="mt-2 text-sm text-slate-600">Henüz talep oluşturmadın.</p>
+                ) : null}
+                {!isOrdersLoading && myOrders.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {myOrders.map((order) => (
+                      <article key={order.id} className="rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm">
+                        <p className="font-semibold text-slate-800">{order.packageName}</p>
+                        <p className="text-slate-600">{order.amount} dk</p>
+                        <p data-testid={`member-order-status-${order.id}`} className="text-slate-600">
+                          {minuteOrderStatusLabel(order.status)}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
             </div>
           </section>
         </div>
