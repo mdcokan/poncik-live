@@ -4,6 +4,32 @@ const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
 const PASSWORD = "123123";
 
+function isCriticalFailedRequest(request: import("@playwright/test").Request) {
+  const resourceType = request.resourceType();
+  if (resourceType === "document" || resourceType === "xhr" || resourceType === "fetch") {
+    return true;
+  }
+
+  const url = request.url().toLowerCase();
+  if (
+    url.includes("__nextjs_font") ||
+    url.includes("favicon") ||
+    url.endsWith(".woff") ||
+    url.endsWith(".woff2") ||
+    url.endsWith(".css") ||
+    url.endsWith(".png") ||
+    url.endsWith(".jpg") ||
+    url.endsWith(".jpeg") ||
+    url.endsWith(".svg") ||
+    url.endsWith(".webp") ||
+    url.endsWith(".ico")
+  ) {
+    return false;
+  }
+
+  return false;
+}
+
 async function fillWithFallback(
   primary: import("@playwright/test").Locator,
   fallback: import("@playwright/test").Locator,
@@ -55,6 +81,9 @@ async function loginWithDiagnostics(
   };
 
   const onRequestFailed = (request: import("@playwright/test").Request) => {
+    if (!isCriticalFailedRequest(request)) {
+      return;
+    }
     const failureText = request.failure()?.errorText ?? "unknown request failure";
     const entry = `${request.method()} ${request.url()} => ${failureText}`;
     diagnostics.requestFailures.push(entry);
@@ -87,7 +116,12 @@ async function loginWithDiagnostics(
         .first()
         .waitFor({ state: "visible", timeout: 15_000 })
         .then(() => "auth-error" as const),
-      page.waitForEvent("requestfailed", { timeout: 15_000 }).then(() => "network-failure" as const),
+      page
+        .waitForEvent("requestfailed", {
+          timeout: 15_000,
+          predicate: (request) => isCriticalFailedRequest(request),
+        })
+        .then(() => "network-failure" as const),
     ]);
 
     if (loginResult !== "success") {

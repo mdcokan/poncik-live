@@ -25,6 +25,8 @@ type GiftCatalogItem = {
   name: string;
   emoji: string;
   price: number;
+  coinAmount?: number;
+  amount?: number;
   sortOrder: number;
 };
 
@@ -91,6 +93,10 @@ export default function StudioPage() {
   const presenceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const giftOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestGiftEventIdRef = useRef<string | null>(null);
+
+  function getGiftMinuteCost(gift: GiftCatalogItem) {
+    return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
+  }
 
   function getSupabase() {
     return getSupabaseBrowserClient();
@@ -810,7 +816,7 @@ export default function StudioPage() {
             >
               Online yayıncılar
             </Link>
-            <span className="rounded-full bg-white px-3 py-1 text-sm font-black text-zinc-900 shadow-sm">0 coin</span>
+            <span className="rounded-full bg-white px-3 py-1 text-sm font-black text-zinc-900 shadow-sm">0 dk</span>
             <button
               type="button"
               className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-pink-500 font-black text-white"
@@ -1112,7 +1118,7 @@ export default function StudioPage() {
                       <article key={giftItem.id} className="rounded-2xl border border-pink-100 bg-white p-3 shadow-sm">
                         <p className="text-2xl leading-none">{giftItem.emoji}</p>
                         <p className="mt-2 text-sm font-black text-zinc-800">{giftItem.name}</p>
-                        <p className="mt-1 text-xs font-semibold text-pink-600">{giftItem.price} coin</p>
+                        <p className="mt-1 text-xs font-semibold text-pink-600">{getGiftMinuteCost(giftItem)} dk</p>
                         <p className="mt-2 text-[11px] text-zinc-500">Yayinda gelen hediyeler burada gorunur.</p>
                       </article>
                     ))}
@@ -1127,7 +1133,7 @@ export default function StudioPage() {
                           <article key={event.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2">
                             <p className="text-sm text-zinc-700">
                               <span className="font-semibold text-zinc-900">{event.senderName}</span> {event.giftEmoji} {event.giftName} gonderdi ·{" "}
-                              {event.amount} coin
+                              {event.amount} dk
                             </p>
                           </article>
                         ))}

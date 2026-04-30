@@ -37,6 +37,8 @@ type GiftCatalogItem = {
   name: string;
   emoji: string;
   price: number;
+  coinAmount?: number;
+  amount?: number;
   sortOrder: number;
 };
 
@@ -152,6 +154,10 @@ export default function ViewerRoomClientPage() {
   const isLive = state.room?.status === "live";
   const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending;
   const isGiftSendDisabled = !state.isLoggedIn || !isLive || Boolean(pendingGiftId);
+
+  function getGiftMinuteCost(gift: GiftCatalogItem) {
+    return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
+  }
 
   const scrollMessagesToBottom = useCallback(() => {
     const element = messagesContainerRef.current;
@@ -600,7 +606,7 @@ export default function ViewerRoomClientPage() {
 
       const giftName = payload.gift?.gift_name || gift.name;
       const balanceText =
-        typeof payload.gift?.sender_balance === "number" ? ` Kalan coin: ${payload.gift.sender_balance}` : "";
+        typeof payload.gift?.sender_balance === "number" ? ` Kalan sure: ${payload.gift.sender_balance} dk` : "";
       setGiftFeedback(`${giftName} gönderildi.${balanceText}`);
       await refreshGiftEvents();
     } catch {
@@ -767,7 +773,7 @@ export default function ViewerRoomClientPage() {
             >
               Online yayincilar
             </Link>
-            <span className="rounded-full bg-white px-3 py-1 text-sm font-black text-zinc-900 shadow-sm">0 coin</span>
+            <span className="rounded-full bg-white px-3 py-1 text-sm font-black text-zinc-900 shadow-sm">0 dk</span>
           </div>
         </div>
       </header>
@@ -874,7 +880,7 @@ export default function ViewerRoomClientPage() {
                       <article key={giftItem.id} className="rounded-2xl border border-pink-100 bg-white p-3 shadow-sm">
                         <p className="text-2xl leading-none">{giftItem.emoji}</p>
                         <p className="mt-2 text-sm font-black text-zinc-800">{giftItem.name}</p>
-                        <p className="mt-1 text-xs font-semibold text-pink-600">{giftItem.price} coin</p>
+                        <p className="mt-1 text-xs font-semibold text-pink-600">{getGiftMinuteCost(giftItem)} dk</p>
                         <button
                           type="button"
                           onClick={() => {

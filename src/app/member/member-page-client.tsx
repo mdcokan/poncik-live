@@ -113,10 +113,10 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
             <h1 className="text-xl font-semibold text-indigo-800">Uye Ana Ekran</h1>
             <div className="flex items-center gap-2">
               <span data-testid="member-wallet-balance" className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">
-                Coin bakiyem: {walletBalance} coin
+                Dakika bakiyem: {walletBalance} dk
               </span>
               <button type="button" className="rounded-full bg-pink-400 px-3 py-1 text-xs font-semibold text-white">
-                Coin yukleme yakinda
+                Dakika yukleme yakinda
               </button>
             </div>
           </header>
@@ -131,8 +131,8 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
             {isAccountStatementOpen ? (
               <section className="mb-4 rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
                 <h2 className="text-base font-semibold text-indigo-800">Hesap Dokumu</h2>
-                <p className="mt-2 text-sm text-slate-700">Coin bakiyem: {walletBalance} coin</p>
-                <p className="mt-1 text-xs text-slate-500">Coin yukleme ozelligi yakinda.</p>
+                <p className="mt-2 text-sm text-slate-700">Mevcut dakika bakiyesi: {walletBalance} dk</p>
+                <p className="mt-1 text-xs text-slate-500">Dakika yukleme yakinda.</p>
               </section>
             ) : null}
             <h2 className="text-lg font-semibold text-indigo-800">Gunun Populer Yayincilari</h2>

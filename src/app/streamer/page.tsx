@@ -183,9 +183,7 @@ export default function StreamerPage() {
           <header className="flex items-center justify-between rounded-3xl bg-white p-4 shadow-sm sm:p-6">
             <h1 className="text-xl font-semibold text-indigo-800">Yayinci Ana Ekran</h1>
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">
-                0 coin
-              </span>
+              <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">0 dk</span>
               <button type="button" className="h-8 w-8 rounded-full bg-pink-400 text-white">
                 +
               </button>
@@ -201,11 +199,11 @@ export default function StreamerPage() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <article className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
               <h2 className="text-sm font-semibold text-slate-500">Bugunku gelen hediye</h2>
-              <p className="mt-2 text-3xl font-bold text-indigo-800">{todayGiftTotal} coin</p>
+              <p className="mt-2 text-3xl font-bold text-indigo-800">{todayGiftTotal} dk</p>
             </article>
             <article className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
               <h2 className="text-sm font-semibold text-slate-500">Toplam gelen hediye</h2>
-              <p className="mt-2 text-3xl font-bold text-indigo-800">{overallGiftTotal} coin</p>
+              <p className="mt-2 text-3xl font-bold text-indigo-800">{overallGiftTotal} dk</p>
             </article>
           </div>
 
@@ -215,10 +213,10 @@ export default function StreamerPage() {
               {recentGifts.map((gift) => (
                 <article key={gift.id} className="rounded-2xl border border-cyan-100 bg-cyan-50 p-3">
                   <p className="text-sm font-semibold text-slate-800">
-                    {gift.senderName} • {gift.giftName}
+                    {gift.senderName} {gift.giftName} gonderdi
                   </p>
                   <p className="text-xs text-slate-500">
-                    +{gift.amount} coin • {new Date(gift.createdAt).toLocaleString("tr-TR")}
+                    {gift.amount} dk • {new Date(gift.createdAt).toLocaleString("tr-TR")}
                   </p>
                 </article>
               ))}

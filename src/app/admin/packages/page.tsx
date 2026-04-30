@@ -7,8 +7,8 @@ import { useAdminAccess } from "@/app/admin/_hooks/use-admin-access";
 const packages = [
   { name: "30 dk", type: "Sure", price: "89 TL" },
   { name: "60 dk", type: "Sure", price: "159 TL" },
-  { name: "100 coin", type: "Coin", price: "119 TL" },
-  { name: "500 coin", type: "Coin", price: "499 TL" },
+  { name: "100 dk", type: "Dakika", price: "119 TL" },
+  { name: "500 dk", type: "Dakika", price: "499 TL" },
 ];
 
 export default function AdminPackagesPage() {
@@ -20,7 +20,7 @@ export default function AdminPackagesPage() {
 
   return (
     <AdminLayout
-      title="Coin & Sure Paketleri"
+      title="Dakika / Sure Paketleri"
       description="Kullanicilarin satin alacagi paketler burada yonetilecek."
       onLogout={signOut}
     >

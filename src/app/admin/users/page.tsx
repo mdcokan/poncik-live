@@ -52,7 +52,7 @@ export default function AdminUsersPage() {
                     <p className="text-xs text-slate-500">{walletSummary.userId}</p>
                   </td>
                   <td className="px-3 py-3 text-slate-700">{walletSummary.role}</td>
-                  <td className="px-3 py-3 font-semibold text-indigo-700">{walletSummary.balance} coin</td>
+                  <td className="px-3 py-3 font-semibold text-indigo-700">{walletSummary.balance} dk</td>
                   <td className="px-3 py-3 text-slate-700">
                     <Link href="/admin/finance" className="font-semibold text-indigo-700 hover:underline">
                       Cuzdan yonetimi

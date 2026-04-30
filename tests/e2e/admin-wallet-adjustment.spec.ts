@@ -37,7 +37,7 @@ async function login(
   await page.waitForURL(opts.successUrl, { timeout: 20_000 });
 }
 
-async function adjustCoinOnRow(
+async function adjustMinutesOnRow(
   page: import("@playwright/test").Page,
   row: import("@playwright/test").Locator,
   amount: string,
@@ -47,7 +47,7 @@ async function adjustCoinOnRow(
   await row.locator('input[type="number"]').first().fill(amount);
   await row.locator('input[type="text"]').first().fill(reason);
   await row.getByRole("button", { name: actionName }).first().click();
-  await expect(page.getByText(/Coin duzenleme basariyla kaydedildi/i).first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Dakika duzenleme basariyla kaydedildi/i).first()).toBeVisible({ timeout: 20_000 });
 }
 
 async function getSessionUserId(page: import("@playwright/test").Page) {
@@ -82,7 +82,7 @@ async function readMemberWalletBalance(page: import("@playwright/test").Page) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-test("admin can add/remove member wallet coins and member sees updated balance", async ({ browser }) => {
+test("admin can add/remove member wallet minutes and member sees updated balance", async ({ browser }) => {
   test.setTimeout(180_000);
 
   const adminContext = await browser.newContext();
@@ -98,7 +98,7 @@ test("admin can add/remove member wallet coins and member sees updated balance",
       successUrl: /\/member(?:\/|$)/,
     });
     await memberPage.goto("/member");
-    await expect(memberPage.getByTestId("member-wallet-balance")).toContainText(/coin/i, { timeout: 20_000 });
+    await expect(memberPage.getByTestId("member-wallet-balance")).toContainText(/dk/i, { timeout: 20_000 });
     const initialBalance = await readMemberWalletBalance(memberPage);
     const memberUserId = await getSessionUserId(memberPage);
     expect(memberUserId, "member oturumu user id bulunamadi").toBeTruthy();
@@ -115,7 +115,7 @@ test("admin can add/remove member wallet coins and member sees updated balance",
 
     const targetRow = adminPage.locator("tr").filter({ hasText: memberUserId! }).first();
     await expect(targetRow).toBeVisible({ timeout: 20_000 });
-    await adjustCoinOnRow(adminPage, targetRow, "100", "Playwright +100", /Coin Ekle/i);
+    await adjustMinutesOnRow(adminPage, targetRow, "100", "Playwright +100", /Dakika Ekle/i);
     await expect
       .poll(
         async () => readMemberWalletBalance(memberPage),
@@ -131,10 +131,10 @@ test("admin can add/remove member wallet coins and member sees updated balance",
     await expect(rowAfterAdd).toBeVisible({ timeout: 20_000 });
 
     const rowText = (await rowAfterAdd.textContent()) ?? "";
-    const balanceMatch = rowText.match(/(\d+)\s*coin/i);
+    const balanceMatch = rowText.match(/(\d+)\s*dk/i);
     const adminSeenBalance = Number.parseInt(balanceMatch?.[1] ?? "0", 10);
     const cleanupAmount = Math.max(1, Math.min(100, adminSeenBalance));
-    await adjustCoinOnRow(adminPage, rowAfterAdd, String(cleanupAmount), "Playwright -cleanup", /Coin Dus/i);
+    await adjustMinutesOnRow(adminPage, rowAfterAdd, String(cleanupAmount), "Playwright -cleanup", /Dakika Dus/i);
   } finally {
     await memberContext.close().catch(() => {});
     await adminContext.close().catch(() => {});

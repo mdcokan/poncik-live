@@ -103,11 +103,11 @@ test("gift sending works or returns insufficient balance gracefully", async ({ b
 
     const viewerResult = viewerAside
       .locator('p')
-      .filter({ hasText: /Kalp gönderildi|Kalp gonderildi|Yetersiz coin bakiyesi/i })
+      .filter({ hasText: /Kalp gönderildi|Kalp gonderildi|Yetersiz dakika bakiyesi/i })
       .first();
     await expect(viewerResult).toBeVisible({ timeout: 20_000 });
     const resultText = (await viewerResult.textContent()) ?? "";
-    const insufficientBalance = /Yetersiz coin bakiyesi/i.test(resultText);
+    const insufficientBalance = /Yetersiz dakika bakiyesi/i.test(resultText);
 
     if (!insufficientBalance) {
       await expect(studioAside.getByText(/Kalp/i).first()).toBeVisible({ timeout: 20_000 });

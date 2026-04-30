@@ -142,16 +142,16 @@ export default function AdminFinancePage() {
 
       const payload = (await response.json()) as { ok?: boolean; message?: string };
       if (!response.ok || !payload.ok) {
-        setFeedback({ type: "error", message: payload.message || "Coin duzenleme basarisiz oldu." });
+        setFeedback({ type: "error", message: payload.message || "Dakika duzenleme basarisiz oldu." });
         return;
       }
 
       setAmountByUserId((previous) => ({ ...previous, [userId]: "" }));
       setReasonByUserId((previous) => ({ ...previous, [userId]: "" }));
-      setFeedback({ type: "success", message: "Coin duzenleme basariyla kaydedildi." });
+      setFeedback({ type: "success", message: "Dakika duzenleme basariyla kaydedildi." });
       await loadFinanceData();
     } catch {
-      setFeedback({ type: "error", message: "Coin duzenleme basarisiz oldu." });
+      setFeedback({ type: "error", message: "Dakika duzenleme basarisiz oldu." });
     } finally {
       setSubmittingUserId(null);
     }
@@ -164,17 +164,17 @@ export default function AdminFinancePage() {
   return (
     <AdminLayout
       title="Kazanc / Finans"
-      description="Gelir, gider, coin hareketleri ve yayinci kazanclari."
+      description="Gelir, gider, dakika hareketleri ve yayinci kazanclari."
       onLogout={signOut}
     >
       <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <article className="rounded-3xl bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">Toplam wallet bakiye</p>
-          <p className="mt-2 text-2xl font-bold text-indigo-800">{totalWalletBalance} coin</p>
+          <p className="text-sm text-slate-500">Toplam dakika bakiyesi</p>
+          <p className="mt-2 text-2xl font-bold text-indigo-800">{totalWalletBalance} dk</p>
         </article>
         <article className="rounded-3xl bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">Bugunku gift coin</p>
-          <p className="mt-2 text-2xl font-bold text-indigo-800">{todayGiftStats.totalAmount} coin</p>
+          <p className="text-sm text-slate-500">Bugunku hediye dk</p>
+          <p className="mt-2 text-2xl font-bold text-indigo-800">{todayGiftStats.totalAmount} dk</p>
         </article>
         <article className="rounded-3xl bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Bugunku gift adedi</p>
@@ -195,7 +195,7 @@ export default function AdminFinancePage() {
       ) : null}
 
       <section className="rounded-3xl bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-indigo-800">Manuel coin yukleme / dusme</h2>
+        <h2 className="text-lg font-semibold text-indigo-800">Manuel dakika yukleme / dusme</h2>
         <p className="mt-1 text-sm text-slate-500">Maksimum 50 kullanici listelenir.</p>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[960px] text-left text-sm">
@@ -217,7 +217,7 @@ export default function AdminFinancePage() {
                     <p className="text-xs text-slate-500">{walletSummary.userId}</p>
                   </td>
                   <td className="px-3 py-3 text-slate-700">{walletSummary.role}</td>
-                  <td className="px-3 py-3 font-semibold text-indigo-700">{walletSummary.balance} coin</td>
+                  <td className="px-3 py-3 font-semibold text-indigo-700">{walletSummary.balance} dk</td>
                   <td className="px-3 py-3">
                     <input
                       type="number"
@@ -255,7 +255,7 @@ export default function AdminFinancePage() {
                         onClick={() => void submitAdjustment(walletSummary.userId, 1)}
                         className="rounded-xl bg-emerald-100 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-200 disabled:opacity-60"
                       >
-                        Coin Ekle
+                        Dakika Ekle
                       </button>
                       <button
                         type="button"
@@ -263,7 +263,7 @@ export default function AdminFinancePage() {
                         onClick={() => void submitAdjustment(walletSummary.userId, -1)}
                         className="rounded-xl bg-rose-100 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-200 disabled:opacity-60"
                       >
-                        Coin Dus
+                        Dakika Dus
                       </button>
                     </div>
                   </td>
@@ -284,7 +284,7 @@ export default function AdminFinancePage() {
                 {profileNameById[giftTransaction.receiver_id] ?? "Yayinci"} | {giftNameById[giftTransaction.gift_id] ?? "🎁 Hediye"}
               </p>
               <p className="text-slate-500">
-                {giftTransaction.amount} coin • {new Date(giftTransaction.created_at).toLocaleString("tr-TR")}
+                {giftTransaction.amount} dk • {new Date(giftTransaction.created_at).toLocaleString("tr-TR")}
               </p>
             </article>
           ))}
@@ -299,7 +299,7 @@ export default function AdminFinancePage() {
             <article key={walletAdjustment.id} className="rounded-2xl border border-cyan-100 px-4 py-3 text-sm">
               <p className="font-semibold text-slate-800">
                 {walletAdjustment.displayName} • {walletAdjustment.amount > 0 ? "+" : ""}
-                {walletAdjustment.amount} coin
+                {walletAdjustment.amount} dk
               </p>
               <p className="text-slate-500">
                 {walletAdjustment.reason || "Not yok"} • {new Date(walletAdjustment.createdAt).toLocaleString("tr-TR")}

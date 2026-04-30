@@ -22,7 +22,7 @@ const ERROR_BY_CODE: Record<string, ApiError> = {
   ROOM_NOT_FOUND: { status: 404, message: "Oda bulunamadı." },
   ROOM_NOT_LIVE: { status: 409, message: "Yayın şu an kapalı." },
   GIFT_NOT_FOUND: { status: 404, message: "Hediye bulunamadı." },
-  INSUFFICIENT_BALANCE: { status: 402, message: "Yetersiz coin bakiyesi." },
+  INSUFFICIENT_BALANCE: { status: 402, message: "Yetersiz dakika bakiyesi." },
   CANNOT_GIFT_SELF: { status: 400, message: "Kendi yayınına hediye gönderemezsin." },
 };
 

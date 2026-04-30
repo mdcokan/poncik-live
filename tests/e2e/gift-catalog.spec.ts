@@ -94,6 +94,7 @@ test("gift catalog is visible in room and sending stays disabled", async ({ brow
     await expect(viewerAside.getByText(/Kalp/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(viewerAside.getByText(/Cikolata|Çikolata/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(viewerAside.getByText(/Araba/i).first()).toBeVisible({ timeout: 20_000 });
+    await expect(viewerAside.getByText(/5\s*dk/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(viewerAside.getByText(/Gonder|Gönder/i).first()).toBeVisible({ timeout: 20_000 });
   } finally {
     if (!streamerPage.isClosed()) {
