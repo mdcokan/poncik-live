@@ -24,10 +24,31 @@ type MemberPageClientProps = {
   initialHasError: boolean;
 };
 
+type PackageType = "minute" | "duration";
+
+type PurchasePackage = {
+  id: string;
+  type: PackageType;
+  name: string;
+  amount: number;
+  price_try: number;
+  sort_order: number;
+};
+
+function packageTypeLabel(type: PackageType) {
+  return type === "minute" ? "Dakika" : "Sure";
+}
+
 export default function MemberPageClient({ initialRooms, initialHasError }: MemberPageClientProps) {
   const safeInitialRooms = initialRooms.filter((room) => room.status === "live");
   const [errorMessage, setErrorMessage] = useState("");
   const [isAccountStatementOpen, setIsAccountStatementOpen] = useState(false);
+  const [isPackagesModalOpen, setIsPackagesModalOpen] = useState(false);
+  const [isPackagesLoading, setIsPackagesLoading] = useState(false);
+  const [packagesError, setPackagesError] = useState("");
+  const [purchaseInfoMessage, setPurchaseInfoMessage] = useState("");
+  const [packages, setPackages] = useState<PurchasePackage[]>([]);
+  const [hasLoadedPackages, setHasLoadedPackages] = useState(false);
   const walletBalance = useWalletBalance({ initialBalance: 0 });
   const { rooms: liveRooms, warning: liveRoomsWarning } = useRealtimeLiveRooms({
     initialRooms: safeInitialRooms,
@@ -65,6 +86,55 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
     } finally {
       window.location.href = "/login";
     }
+  }
+
+  async function loadPackages() {
+    setIsPackagesLoading(true);
+    setPackagesError("");
+    setPurchaseInfoMessage("");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setPackages([]);
+        setPackagesError("Paketler şu an yüklenemedi.");
+        return;
+      }
+
+      const response = await fetch("/api/packages", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      });
+
+      const payload = (await response.json()) as { ok?: boolean; message?: string; packages?: PurchasePackage[] };
+      if (!response.ok || !payload.ok) {
+        setPackages([]);
+        setPackagesError("Paketler şu an yüklenemedi.");
+        return;
+      }
+
+      setPackages(payload.packages ?? []);
+      setHasLoadedPackages(true);
+    } catch {
+      setPackages([]);
+      setPackagesError("Paketler şu an yüklenemedi.");
+    } finally {
+      setIsPackagesLoading(false);
+    }
+  }
+
+  async function handleOpenPackages() {
+    setIsPackagesModalOpen(true);
+    if (hasLoadedPackages) {
+      return;
+    }
+    await loadPackages();
   }
 
   const featuredStreamers = safeLiveRooms.slice(0, 5);
@@ -109,14 +179,19 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
         </aside>
 
         <section className="space-y-4">
-          <header className="flex items-center justify-between rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+          <header className="flex flex-col gap-3 rounded-3xl bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
             <h1 className="text-xl font-semibold text-indigo-800">Uye Ana Ekran</h1>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 self-start sm:self-auto">
               <span data-testid="member-wallet-balance" className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">
                 Dakika bakiyem: {walletBalance} dk
               </span>
-              <button type="button" className="rounded-full bg-pink-400 px-3 py-1 text-xs font-semibold text-white">
-                Dakika yukleme yakinda
+              <button
+                type="button"
+                data-testid="open-member-packages"
+                onClick={() => void handleOpenPackages()}
+                className="rounded-full bg-pink-400 px-3 py-1 text-xs font-semibold text-white transition hover:bg-pink-300"
+              >
+                Dakika Yükle
               </button>
             </div>
           </header>
@@ -190,6 +265,75 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
           </div>
         </section>
       </div>
+
+      {isPackagesModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-indigo-950/40 p-3 sm:items-center sm:p-5">
+          <section
+            data-testid="member-packages-modal"
+            className="max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-xl"
+          >
+            <header className="flex items-start justify-between border-b border-cyan-100 px-4 py-4 sm:px-6">
+              <div>
+                <h2 className="text-lg font-semibold text-indigo-800">Dakika Paketleri</h2>
+                <p className="mt-1 text-sm text-slate-600">Satın almak istediğiniz dakika paketini seçin.</p>
+              </div>
+              <button
+                type="button"
+                data-testid="member-packages-close"
+                onClick={() => setIsPackagesModalOpen(false)}
+                className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
+              >
+                Kapat
+              </button>
+            </header>
+
+            <div className="max-h-[70vh] overflow-y-auto px-4 py-4 sm:px-6">
+              {isPackagesLoading ? <p className="text-sm text-slate-500">Yukleniyor...</p> : null}
+              {!isPackagesLoading && packagesError ? (
+                <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  {packagesError}
+                </p>
+              ) : null}
+
+              {!isPackagesLoading && !packagesError && packages.length === 0 ? (
+                <p className="rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm text-slate-600">
+                  Şu an aktif dakika paketi bulunmuyor.
+                </p>
+              ) : null}
+
+              {!isPackagesLoading && !packagesError && packages.length > 0 ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {packages.map((item) => (
+                    <article key={item.id} className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <h3 className="text-sm font-semibold text-indigo-800">{item.name}</h3>
+                        <span className="inline-flex rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                          {packageTypeLabel(item.type)}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-700">Miktar: {item.amount} dk</p>
+                      <p className="mt-1 text-sm text-slate-700">Fiyat: {item.price_try} TL</p>
+                      <button
+                        type="button"
+                        className="mt-4 rounded-xl bg-pink-400 px-3 py-2 text-xs font-semibold text-white transition hover:bg-pink-300"
+                        onClick={() => setPurchaseInfoMessage("Ödeme altyapısı bir sonraki fazda bağlanacak.")}
+                      >
+                        Satın Al
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+
+              {purchaseInfoMessage ? (
+                <p data-testid="member-packages-purchase-message" className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+                  {purchaseInfoMessage}
+                </p>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
