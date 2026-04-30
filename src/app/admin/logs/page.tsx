@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { AdminAccessState } from "@/app/admin/_components/admin-access-state";
 import { AdminLayout } from "@/app/admin/_components/admin-layout";
 import { useAdminAccess } from "@/app/admin/_hooks/use-admin-access";
@@ -25,6 +27,37 @@ type LogsApiResponse = {
   logs?: AdminLog[];
 };
 
+type LogFilters = {
+  actionType: string;
+  targetUserId: string;
+  adminId: string;
+  q: string;
+};
+
+const ACTION_TYPE_OPTIONS = [
+  "",
+  "user_banned",
+  "user_unbanned",
+  "user_role_changed",
+  "live_room_closed",
+  "wallet_minutes_added",
+  "wallet_minutes_removed",
+  "minute_order_approved",
+  "minute_order_rejected",
+  "room_user_muted",
+  "room_user_unmuted",
+  "room_user_kicked",
+  "room_user_room_banned",
+  "room_user_room_unbanned",
+] as const;
+
+const DEFAULT_FILTERS: LogFilters = {
+  actionType: "",
+  targetUserId: "",
+  adminId: "",
+  q: "",
+};
+
 function formatDateTime(value: string) {
   const timestamp = new Date(value).getTime();
   if (!Number.isFinite(timestamp)) {
@@ -45,15 +78,17 @@ function summarizeMetadata(metadata: Record<string, unknown>) {
   }
 }
 
-export default function AdminLogsPage() {
+function AdminLogsContent() {
+  const searchParams = useSearchParams();
   const { loading, authorized, message, signOut } = useAdminAccess();
   const [logs, setLogs] = useState<AdminLog[]>([]);
-  const [actionTypeInput, setActionTypeInput] = useState("");
-  const [activeActionType, setActiveActionType] = useState("");
+  const [draftFilters, setDraftFilters] = useState<LogFilters>(DEFAULT_FILTERS);
+  const [activeFilters, setActiveFilters] = useState<LogFilters>(DEFAULT_FILTERS);
   const [isFetching, setIsFetching] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "error"; message: string } | null>(null);
 
-  async function loadLogs(nextActionType: string) {
+  async function loadLogs(nextFilters: LogFilters) {
     if (!authorized) {
       return;
     }
@@ -73,9 +108,22 @@ export default function AdminLogsPage() {
       }
 
       const params = new URLSearchParams({ limit: "50" });
-      const trimmedActionType = nextActionType.trim();
+      const trimmedActionType = nextFilters.actionType.trim();
+      const trimmedTargetUserId = nextFilters.targetUserId.trim();
+      const trimmedAdminId = nextFilters.adminId.trim();
+      const trimmedQuery = nextFilters.q.trim();
+
       if (trimmedActionType) {
         params.set("actionType", trimmedActionType);
+      }
+      if (trimmedTargetUserId) {
+        params.set("targetUserId", trimmedTargetUserId);
+      }
+      if (trimmedAdminId) {
+        params.set("adminId", trimmedAdminId);
+      }
+      if (trimmedQuery) {
+        params.set("q", trimmedQuery);
       }
 
       const response = await fetch(`/api/admin/logs?${params.toString()}`, {
@@ -101,8 +149,26 @@ export default function AdminLogsPage() {
   }
 
   useEffect(() => {
-    void loadLogs(activeActionType);
-  }, [authorized, activeActionType]);
+    if (isInitialized) {
+      return;
+    }
+    const initialFilters: LogFilters = {
+      actionType: searchParams.get("actionType")?.trim() ?? "",
+      targetUserId: searchParams.get("targetUserId")?.trim() ?? "",
+      adminId: searchParams.get("adminId")?.trim() ?? "",
+      q: searchParams.get("q")?.trim() ?? "",
+    };
+    setDraftFilters(initialFilters);
+    setActiveFilters(initialFilters);
+    setIsInitialized(true);
+  }, [isInitialized, searchParams]);
+
+  useEffect(() => {
+    if (!isInitialized) {
+      return;
+    }
+    void loadLogs(activeFilters);
+  }, [activeFilters, authorized, isInitialized]);
 
   if (loading || !authorized) {
     return <AdminAccessState loading={loading} authorized={authorized} message={message} />;
@@ -115,29 +181,68 @@ export default function AdminLogsPage() {
       onLogout={signOut}
     >
       <section className="rounded-3xl bg-white p-5 shadow-sm">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input
-            value={actionTypeInput}
-            onChange={(event) => setActionTypeInput(event.target.value)}
-            placeholder="Action type filtrele (örnek: user_banned)"
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-300 sm:max-w-md"
-          />
-          <div className="flex gap-2">
+        <div className="mb-4 rounded-2xl border border-cyan-100 bg-cyan-50/40 p-3">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
+            <label className="flex flex-col gap-1 text-xs text-slate-600">
+              İşlem tipi
+              <select
+                value={draftFilters.actionType}
+                onChange={(event) => setDraftFilters((prev) => ({ ...prev, actionType: event.target.value }))}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-300"
+              >
+                <option value="">Tümü</option>
+                {ACTION_TYPE_OPTIONS.filter((value) => value).map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-slate-600">
+              Hedef kullanıcı ID
+              <input
+                value={draftFilters.targetUserId}
+                onChange={(event) => setDraftFilters((prev) => ({ ...prev, targetUserId: event.target.value }))}
+                placeholder="Hedef kullanıcı ID"
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-300"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-slate-600">
+              Admin ID
+              <input
+                value={draftFilters.adminId}
+                onChange={(event) => setDraftFilters((prev) => ({ ...prev, adminId: event.target.value }))}
+                placeholder="Admin ID (opsiyonel)"
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-300"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-slate-600">
+              Arama
+              <input
+                value={draftFilters.q}
+                onChange={(event) => setDraftFilters((prev) => ({ ...prev, q: event.target.value }))}
+                placeholder="Açıklama veya işlem ara..."
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-300"
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => setActiveActionType(actionTypeInput)}
+              onClick={() => setActiveFilters({ ...draftFilters })}
               className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
             >
-              Uygula
+              Yenile
             </button>
             <button
               type="button"
               onClick={() => {
-                void loadLogs(activeActionType);
+                setDraftFilters(DEFAULT_FILTERS);
+                setActiveFilters(DEFAULT_FILTERS);
               }}
               className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
             >
-              Yenile
+              Filtreleri temizle
             </button>
           </div>
         </div>
@@ -163,28 +268,42 @@ export default function AdminLogsPage() {
                 <tr key={log.id} className="border-t border-cyan-100">
                   <td className="px-3 py-3 text-slate-700">{formatDateTime(log.createdAt)}</td>
                   <td className="px-3 py-3 text-slate-700">
-                    <p className="font-semibold text-slate-800">{log.adminName}</p>
+                    <Link href={`/admin/users/${log.adminId}`} className="font-semibold text-indigo-700 hover:text-indigo-600 hover:underline">
+                      {log.adminName}
+                    </Link>
                     <p className="text-xs text-slate-500">{log.adminId}</p>
                   </td>
                   <td className="px-3 py-3 text-slate-700">{log.actionType}</td>
                   <td className="px-3 py-3 text-slate-700">
                     {log.targetUserId ? (
                       <>
-                        <p className="font-semibold text-slate-800">{log.targetUserName ?? "Uye"}</p>
+                        <Link
+                          href={`/admin/users/${log.targetUserId}`}
+                          className="font-semibold text-indigo-700 hover:text-indigo-600 hover:underline"
+                        >
+                          {log.targetUserName ?? "Uye"}
+                        </Link>
                         <p className="text-xs text-slate-500">{log.targetUserId}</p>
                       </>
                     ) : (
                       "-"
                     )}
                   </td>
-                  <td className="px-3 py-3 text-slate-700">{log.description}</td>
+                  <td className="px-3 py-3 text-slate-700">
+                    <p>{log.description}</p>
+                    {log.targetRoomId ? (
+                      <Link href={`/rooms/${log.targetRoomId}`} className="mt-1 inline-block text-xs font-semibold text-cyan-700 hover:underline">
+                        Odayı Aç
+                      </Link>
+                    ) : null}
+                  </td>
                   <td className="px-3 py-3 font-mono text-xs text-slate-600">{summarizeMetadata(log.metadata)}</td>
                 </tr>
               ))}
               {logs.length === 0 ? (
                 <tr className="border-t border-cyan-100">
                   <td className="px-3 py-4 text-sm text-slate-500" colSpan={6}>
-                    {isFetching ? "İşlem kayıtları yükleniyor..." : "Henüz işlem kaydı yok."}
+                    {isFetching ? "İşlem kayıtları yükleniyor..." : "Bu filtrelerle işlem kaydı bulunamadı."}
                   </td>
                 </tr>
               ) : null}
@@ -193,5 +312,13 @@ export default function AdminLogsPage() {
         </div>
       </section>
     </AdminLayout>
+  );
+}
+
+export default function AdminLogsPage() {
+  return (
+    <Suspense fallback={<AdminAccessState loading={true} authorized={false} message="" />}>
+      <AdminLogsContent />
+    </Suspense>
   );
 }

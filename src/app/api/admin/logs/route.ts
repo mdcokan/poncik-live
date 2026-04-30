@@ -50,6 +50,10 @@ function parseLimit(rawLimit: string | null) {
   return Math.min(Math.max(limit, 1), MAX_LIMIT);
 }
 
+function escapeIlikeValue(value: string) {
+  return value.replace(/[%_]/g, (match) => `\\${match}`).replace(/,/g, " ");
+}
+
 export async function GET(request: Request) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -101,6 +105,8 @@ export async function GET(request: Request) {
     const limit = parseLimit(url.searchParams.get("limit"));
     const actionType = url.searchParams.get("actionType")?.trim() ?? "";
     const targetUserId = url.searchParams.get("targetUserId")?.trim() ?? "";
+    const adminId = url.searchParams.get("adminId")?.trim() ?? "";
+    const q = url.searchParams.get("q")?.trim() ?? "";
 
     let query = supabase
       .from("admin_action_logs")
@@ -113,6 +119,13 @@ export async function GET(request: Request) {
     }
     if (targetUserId) {
       query = query.eq("target_user_id", targetUserId);
+    }
+    if (adminId) {
+      query = query.eq("admin_id", adminId);
+    }
+    if (q) {
+      const escapedSearch = escapeIlikeValue(q);
+      query = query.or(`description.ilike.%${escapedSearch}%,action_type.ilike.%${escapedSearch}%`);
     }
 
     const { data: rows, error: logsError } = await query;

@@ -273,6 +273,7 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
         id: row.id,
         actionType: row.action_type,
         description: row.description,
+        adminId: row.admin_id,
         adminName: adminNameById.get(row.admin_id) ?? "Admin",
         createdAt: row.created_at,
         metadata: row.metadata ?? {},

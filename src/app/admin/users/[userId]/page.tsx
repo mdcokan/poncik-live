@@ -42,6 +42,7 @@ type ActionLog = {
   id: string;
   actionType: string;
   description: string;
+  adminId: string;
   adminName: string;
   createdAt: string;
   metadata: Record<string, unknown>;
@@ -526,11 +527,20 @@ export default function AdminUserDetailPage() {
 
             <section className="mt-4 rounded-2xl border border-cyan-100 bg-white p-4">
               <h2 className="text-sm font-semibold text-indigo-800">Admin İşlem Geçmişi</h2>
+              <Link
+                href={`/admin/logs?targetUserId=${detail.profile.id}`}
+                className="mt-1 inline-block text-xs font-semibold text-indigo-700 hover:text-indigo-600 hover:underline"
+              >
+                Bu kullanıcıya ait tüm işlem kayıtlarını görüntüle
+              </Link>
               <div className="mt-3 space-y-2">
                 {detail.actionLogs.map((log) => (
                   <article key={log.id} className="rounded-xl border border-cyan-100 px-3 py-2 text-sm">
                     <p className="font-semibold text-slate-800">
-                      {log.actionType} • {log.adminName}
+                      {log.actionType} •{" "}
+                      <Link href={`/admin/users/${log.adminId}`} className="text-indigo-700 hover:text-indigo-600 hover:underline">
+                        {log.adminName}
+                      </Link>
                     </p>
                     <p className="text-slate-600">{log.description}</p>
                     <p className="font-mono text-xs text-slate-500">{safeMetadata(log.metadata)}</p>
