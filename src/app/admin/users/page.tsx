@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminAccessState } from "@/app/admin/_components/admin-access-state";
 import { AdminLayout } from "@/app/admin/_components/admin-layout";
@@ -239,6 +240,7 @@ export default function AdminUsersPage() {
                 <th className="px-3 py-2 font-semibold">Dakika bakiyesi</th>
                 <th className="px-3 py-2 font-semibold">Durum</th>
                 <th className="px-3 py-2 font-semibold">Güncellenme</th>
+                <th className="px-3 py-2 font-semibold">Detay</th>
                 <th className="px-3 py-2 font-semibold">İşlem</th>
               </tr>
             </thead>
@@ -257,6 +259,14 @@ export default function AdminUsersPage() {
                     <td className="px-3 py-3 font-semibold text-indigo-700">{userRow.balance} dk</td>
                     <td className="px-3 py-3 text-slate-700">{userRow.isBanned ? "Banlı" : "Aktif"}</td>
                     <td className="px-3 py-3 text-slate-700">{new Date(userRow.updatedAt).toLocaleString("tr-TR")}</td>
+                    <td className="px-3 py-3 text-slate-700">
+                      <Link
+                        href={`/admin/users/${userRow.id}`}
+                        className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-100"
+                      >
+                        Detay
+                      </Link>
+                    </td>
                     <td className="px-3 py-3 text-slate-700">
                       <div className="flex items-center gap-2">
                         <select
@@ -297,7 +307,7 @@ export default function AdminUsersPage() {
               })}
               {users.length === 0 ? (
                 <tr className="border-t border-cyan-100">
-                  <td className="px-3 py-4 text-sm text-slate-500" colSpan={6}>
+                  <td className="px-3 py-4 text-sm text-slate-500" colSpan={7}>
                     {isFetching ? "Kullanıcılar yükleniyor..." : "Kullanıcı verisi bulunamadı."}
                   </td>
                 </tr>
