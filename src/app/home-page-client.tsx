@@ -17,13 +17,15 @@ type HomePageClientProps = {
 };
 
 export default function HomePageClient({ initialRooms, initialHasError }: HomePageClientProps) {
+  const safeInitialRooms = initialRooms.filter((room) => room.status === "live");
   const { rooms: liveRooms, warning } = useRealtimeLiveRooms({
-    initialRooms,
+    initialRooms: safeInitialRooms,
     initialHasError,
     limit: 24,
     channelKey: "home",
   });
-  const featuredStreamers = liveRooms.slice(0, 5);
+  const safeLiveRooms = liveRooms.filter((room) => room.status === "live");
+  const featuredStreamers = safeLiveRooms.slice(0, 5);
 
   return (
     <main className="min-h-screen bg-cyan-100 text-slate-800">
@@ -101,9 +103,9 @@ export default function HomePageClient({ initialRooms, initialHasError }: HomePa
 
           <section className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
             <h2 className="text-lg font-semibold text-indigo-800">Online Yayincilar</h2>
-            {liveRooms.length > 0 ? (
+            {safeLiveRooms.length > 0 ? (
               <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-                {liveRooms.map((room) => (
+                {safeLiveRooms.map((room) => (
                   <Link
                     key={room.id}
                     href={`/rooms/${room.id}`}

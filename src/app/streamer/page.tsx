@@ -19,8 +19,13 @@ const menuItems = [
   { label: "Canli Destek", href: "#" },
 ];
 
-const featuredStreamers = ["LunaMavi", "NoraGlow", "PapatyaLive", "MiraSohbet"];
-const onlineStreamers = ["RoseMoon", "LilaWave", "MintQueen", "NehirTalk", "VioletSky", "CosmoAda"];
+type GiftSummaryRow = {
+  id: string;
+  sender_id: string;
+  gift_id: string;
+  amount: number;
+  created_at: string;
+};
 
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -35,6 +40,12 @@ function getSupabaseClient() {
 
 export default function StreamerPage() {
   const [errorMessage, setErrorMessage] = useState("");
+  const [streamerId, setStreamerId] = useState<string | null>(null);
+  const [todayGiftTotal, setTodayGiftTotal] = useState(0);
+  const [overallGiftTotal, setOverallGiftTotal] = useState(0);
+  const [recentGifts, setRecentGifts] = useState<
+    Array<{ id: string; senderName: string; giftName: string; amount: number; createdAt: string }>
+  >([]);
 
   useEffect(() => {
     async function checkRole() {
@@ -48,6 +59,7 @@ export default function StreamerPage() {
           window.location.href = "/streamer-login";
           return;
         }
+        setStreamerId(user.id);
 
         const { data: profile } = await supabase
           .from("profiles")
@@ -65,6 +77,71 @@ export default function StreamerPage() {
 
     checkRole();
   }, []);
+
+  useEffect(() => {
+    async function loadGiftSummary() {
+      if (!streamerId) {
+        return;
+      }
+      try {
+        const supabase = getSupabaseClient();
+        const { data: giftRows } = await supabase
+          .from("gift_transactions")
+          .select("id, sender_id, gift_id, amount, created_at")
+          .eq("receiver_id", streamerId)
+          .order("created_at", { ascending: false })
+          .limit(20);
+
+        const rows = (giftRows as GiftSummaryRow[] | null) ?? [];
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayStartMs = todayStart.getTime();
+        let todayTotal = 0;
+        let total = 0;
+        for (const row of rows) {
+          total += row.amount;
+          if (new Date(row.created_at).getTime() >= todayStartMs) {
+            todayTotal += row.amount;
+          }
+        }
+        setTodayGiftTotal(todayTotal);
+        setOverallGiftTotal(total);
+
+        const senderIds = Array.from(new Set(rows.map((row) => row.sender_id)));
+        const giftIds = Array.from(new Set(rows.map((row) => row.gift_id)));
+        const [{ data: senders }, { data: gifts }] = await Promise.all([
+          senderIds.length
+            ? supabase.from("profiles").select("id, display_name").in("id", senderIds)
+            : Promise.resolve({ data: [] }),
+          giftIds.length ? supabase.from("gift_catalog").select("id, name, emoji").in("id", giftIds) : Promise.resolve({ data: [] }),
+        ]);
+
+        const senderNameById = new Map<string, string>(
+          (((senders ?? []) as Array<{ id: string; display_name: string | null }>).map((row) => [
+            row.id,
+            row.display_name?.trim() || "Uye",
+          ])),
+        );
+        const giftById = new Map<string, string>(
+          (((gifts ?? []) as Array<{ id: string; name: string; emoji: string }>).map((row) => [row.id, `${row.emoji} ${row.name}`])),
+        );
+        setRecentGifts(
+          rows.map((row) => ({
+            id: row.id,
+            senderName: senderNameById.get(row.sender_id) ?? "Uye",
+            giftName: giftById.get(row.gift_id) ?? "🎁 Hediye",
+            amount: row.amount,
+            createdAt: row.created_at,
+          })),
+        );
+      } catch {
+        setTodayGiftTotal(0);
+        setOverallGiftTotal(0);
+        setRecentGifts([]);
+      }
+    }
+    void loadGiftSummary();
+  }, [streamerId]);
 
   async function handleLogout() {
     try {
@@ -121,29 +198,35 @@ export default function StreamerPage() {
             </p>
           ) : null}
 
-          <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
-            <h2 className="text-lg font-semibold text-indigo-800">Gunun Populer Yayincilari</h2>
-            <div className="mt-4 flex gap-3 overflow-x-auto">
-              {featuredStreamers.map((name) => (
-                <article key={name} className="min-w-[160px] rounded-2xl bg-cyan-50 p-3">
-                  <div className="h-14 w-14 rounded-full bg-gradient-to-br from-pink-300 to-violet-400" />
-                  <p className="mt-3 text-sm font-semibold">{name}</p>
-                  <p className="mt-1 text-xs text-emerald-600">online • HD</p>
-                </article>
-              ))}
-            </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <article className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="text-sm font-semibold text-slate-500">Bugunku gelen hediye</h2>
+              <p className="mt-2 text-3xl font-bold text-indigo-800">{todayGiftTotal} coin</p>
+            </article>
+            <article className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="text-sm font-semibold text-slate-500">Toplam gelen hediye</h2>
+              <p className="mt-2 text-3xl font-bold text-indigo-800">{overallGiftTotal} coin</p>
+            </article>
           </div>
 
           <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
-            <h2 className="text-lg font-semibold text-indigo-800">Online Yayincilar</h2>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-              {onlineStreamers.map((name) => (
-                <article key={name} className="rounded-2xl bg-cyan-50 p-3">
-                  <div className="h-16 rounded-xl bg-gradient-to-br from-indigo-300 to-pink-300" />
-                  <p className="mt-3 text-sm font-semibold">{name}</p>
-                  <p className="mt-1 text-xs text-emerald-600">canli • HD</p>
+            <h2 className="text-lg font-semibold text-indigo-800">Son gelen hediyeler</h2>
+            <div className="mt-4 space-y-2">
+              {recentGifts.map((gift) => (
+                <article key={gift.id} className="rounded-2xl border border-cyan-100 bg-cyan-50 p-3">
+                  <p className="text-sm font-semibold text-slate-800">
+                    {gift.senderName} • {gift.giftName}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    +{gift.amount} coin • {new Date(gift.createdAt).toLocaleString("tr-TR")}
+                  </p>
                 </article>
               ))}
+              {recentGifts.length === 0 ? (
+                <p className="rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm text-slate-500">
+                  Henuz hediye kaydi yok.
+                </p>
+              ) : null}
             </div>
           </div>
         </section>

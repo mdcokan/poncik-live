@@ -22,13 +22,17 @@ type LiveRoomsBroadcastPayload = {
   at?: number;
 };
 
+function ensureLiveRooms(rooms: LiveRoom[]) {
+  return rooms.filter((room) => room.status === "live");
+}
+
 export function useRealtimeLiveRooms({
   initialRooms,
   initialHasError = false,
   limit = 24,
   channelKey,
 }: UseRealtimeLiveRoomsOptions) {
-  const [rooms, setRooms] = useState<LiveRoom[]>(initialRooms);
+  const [rooms, setRooms] = useState<LiveRoom[]>(ensureLiveRooms(initialRooms));
   const [warning, setWarning] = useState(initialHasError ? "Canli liste su an yenilenemedi." : "");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const latestRequestIdRef = useRef(0);
@@ -59,7 +63,7 @@ export function useRealtimeLiveRooms({
         return;
       }
 
-      setRooms(Array.isArray(json.rooms) ? json.rooms : []);
+      setRooms(Array.isArray(json.rooms) ? ensureLiveRooms(json.rooms) : []);
       setWarning("");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {

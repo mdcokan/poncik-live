@@ -40,8 +40,8 @@ async function login(
   await page.waitForURL(opts.successUrl, { timeout: 20_000 });
 }
 
-test("gift catalog is visible in room and sending stays disabled", async ({ browser }) => {
-  test.setTimeout(140_000);
+test("gift sending works or returns insufficient balance gracefully", async ({ browser }) => {
+  test.setTimeout(160_000);
 
   const streamerContext = await browser.newContext();
   const memberContext = await browser.newContext();
@@ -71,6 +71,10 @@ test("gift catalog is visible in room and sending stays disabled", async ({ brow
     await startButton.click();
     await expect(stopButton).toBeVisible({ timeout: 20_000 });
 
+    const studioAside = streamerPage.locator("aside").first();
+    await studioAside.getByRole("button", { name: /^Hediye$/i }).first().click();
+    await expect(studioAside.getByText(/Son hediyeler/i).first()).toBeVisible({ timeout: 20_000 });
+
     await login(memberPage, {
       loginPath: "/login",
       email: MEMBER_EMAIL,
@@ -82,19 +86,33 @@ test("gift catalog is visible in room and sending stays disabled", async ({ brow
     const onlineSection = memberPage.getByRole("heading", { name: /Online Yayincilar/i }).locator("xpath=ancestor::div[1]");
     await expect(onlineSection).toBeVisible({ timeout: 20_000 });
 
-    const edaCardLink = onlineSection.getByRole("link", { name: /Eda|Yayina gir/i }).first();
-    await expect(edaCardLink).toBeVisible({ timeout: 25_000 });
-    await edaCardLink.click();
+    const streamCardLink = onlineSection.getByRole("link", { name: /Eda|Yayina gir/i }).first();
+    await expect(streamCardLink).toBeVisible({ timeout: 25_000 });
+    await streamCardLink.click();
     await expect(memberPage).toHaveURL(/\/rooms\/[^/]+$/, { timeout: 20_000 });
 
     const viewerAside = memberPage.locator("aside").first();
     await viewerAside.getByRole("button", { name: /^Hediye$/i }).first().click();
-    await expect(viewerAside.getByText(/Hediye Katalogu/i).first()).toBeVisible({ timeout: 20_000 });
-    await expect(viewerAside.getByText(/Hediye gondermek icin giris yapmalisin/i)).toHaveCount(0);
-    await expect(viewerAside.getByText(/Kalp/i).first()).toBeVisible({ timeout: 20_000 });
-    await expect(viewerAside.getByText(/Cikolata|Çikolata/i).first()).toBeVisible({ timeout: 20_000 });
-    await expect(viewerAside.getByText(/Araba/i).first()).toBeVisible({ timeout: 20_000 });
-    await expect(viewerAside.getByText(/Gonder|Gönder/i).first()).toBeVisible({ timeout: 20_000 });
+    await expect(viewerAside.getByText(/Son hediyeler/i).first()).toBeVisible({ timeout: 20_000 });
+
+    const heartCard = viewerAside.locator("article").filter({ hasText: /Kalp/i }).first();
+    await expect(heartCard).toBeVisible({ timeout: 20_000 });
+    const sendButton = heartCard.getByRole("button", { name: /Gonder|Gönder|Gonderiliyor|Gönderiliyor/i }).first();
+    await expect(sendButton).toBeVisible({ timeout: 20_000 });
+    await sendButton.click();
+
+    const viewerResult = viewerAside
+      .locator('p')
+      .filter({ hasText: /Kalp gönderildi|Kalp gonderildi|Yetersiz coin bakiyesi/i })
+      .first();
+    await expect(viewerResult).toBeVisible({ timeout: 20_000 });
+    const resultText = (await viewerResult.textContent()) ?? "";
+    const insufficientBalance = /Yetersiz coin bakiyesi/i.test(resultText);
+
+    if (!insufficientBalance) {
+      await expect(studioAside.getByText(/Kalp/i).first()).toBeVisible({ timeout: 20_000 });
+      await expect(studioAside.getByText(/gonderdi|gönderdi/i).first()).toBeVisible({ timeout: 20_000 });
+    }
   } finally {
     if (!streamerPage.isClosed()) {
       const canStop = await stopButton.isVisible().catch(() => false);

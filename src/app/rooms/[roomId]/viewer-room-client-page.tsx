@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchRoomPresence, type RoomPresenceUser } from "@/lib/room-presence";
 import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
+import { fetchRoomGiftEvents, type RoomGiftEvent } from "@/lib/gift-transactions";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 type RoomRow = {
@@ -37,6 +38,16 @@ type GiftCatalogItem = {
   emoji: string;
   price: number;
   sortOrder: number;
+};
+
+type SendGiftApiResponse = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  gift?: {
+    gift_name?: string;
+    sender_balance?: number;
+  };
 };
 
 function getStreamerName(room: RoomRow | null, profile: ProfileRow | null) {
@@ -127,13 +138,20 @@ export default function ViewerRoomClientPage() {
   const [giftCatalog, setGiftCatalog] = useState<GiftCatalogItem[]>([]);
   const [isGiftCatalogLoading, setIsGiftCatalogLoading] = useState(false);
   const [hasGiftCatalogLoaded, setHasGiftCatalogLoaded] = useState(false);
+  const [pendingGiftId, setPendingGiftId] = useState<string | null>(null);
+  const [giftFeedback, setGiftFeedback] = useState<string | null>(null);
+  const [giftEvents, setGiftEvents] = useState<RoomGiftEvent[]>([]);
+  const [giftOverlayText, setGiftOverlayText] = useState<string | null>(null);
   const messageIdsRef = useRef(new Set<string>());
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const giftOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestGiftEventIdRef = useRef<string | null>(null);
 
   const isLive = state.room?.status === "live";
   const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending;
+  const isGiftSendDisabled = !state.isLoggedIn || !isLive || Boolean(pendingGiftId);
 
   const scrollMessagesToBottom = useCallback(() => {
     const element = messagesContainerRef.current;
@@ -222,6 +240,17 @@ export default function ViewerRoomClientPage() {
     },
     [refreshPresence],
   );
+
+  const refreshGiftEvents = useCallback(async () => {
+    if (!roomId || !isLive) {
+      setGiftEvents([]);
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const nextEvents = await fetchRoomGiftEvents(roomId, 20, supabase);
+    setGiftEvents(nextEvents);
+  }, [isLive, roomId]);
 
   const upsertOwnPresence = useCallback(async () => {
     if (!roomId || !state.userId || !isLive) {
@@ -535,6 +564,52 @@ export default function ViewerRoomClientPage() {
     }
   }
 
+  async function handleSendGift(gift: GiftCatalogItem) {
+    if (!state.isLoggedIn) {
+      window.location.href = "/login";
+      return;
+    }
+
+    if (!isLive || pendingGiftId) {
+      return;
+    }
+
+    setGiftFeedback(null);
+    setPendingGiftId(gift.id);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const response = await fetch("/api/gifts/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ roomId, giftId: gift.id }),
+        cache: "no-store",
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as SendGiftApiResponse;
+      if (!response.ok || !payload.ok) {
+        setGiftFeedback(payload.message || "Hediye gönderilemedi. Lütfen tekrar dene.");
+        return;
+      }
+
+      const giftName = payload.gift?.gift_name || gift.name;
+      const balanceText =
+        typeof payload.gift?.sender_balance === "number" ? ` Kalan coin: ${payload.gift.sender_balance}` : "";
+      setGiftFeedback(`${giftName} gönderildi.${balanceText}`);
+      await refreshGiftEvents();
+    } catch {
+      setGiftFeedback("Hediye gönderilemedi. Lütfen tekrar dene.");
+    } finally {
+      setPendingGiftId(null);
+    }
+  }
+
   useEffect(() => {
     if (activeTab !== "gift" || hasGiftCatalogLoaded) {
       return;
@@ -575,6 +650,68 @@ export default function ViewerRoomClientPage() {
       cancelled = true;
     };
   }, [activeTab, hasGiftCatalogLoaded]);
+
+  useEffect(() => {
+    if (!roomId || !isLive) {
+      setGiftEvents([]);
+      latestGiftEventIdRef.current = null;
+      return;
+    }
+    void refreshGiftEvents();
+  }, [isLive, refreshGiftEvents, roomId]);
+
+  useEffect(() => {
+    if (!roomId || !isLive) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`public:gift-transactions:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "gift_transactions",
+          filter: `room_id=eq.${roomId}`,
+        },
+        () => {
+          void refreshGiftEvents();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [isLive, refreshGiftEvents, roomId]);
+
+  useEffect(() => {
+    if (!giftEvents.length) {
+      return;
+    }
+
+    const newestGift = giftEvents[giftEvents.length - 1];
+    if (latestGiftEventIdRef.current === newestGift.id) {
+      return;
+    }
+    latestGiftEventIdRef.current = newestGift.id;
+    setGiftOverlayText(`${newestGift.senderName} ${newestGift.giftEmoji} ${newestGift.giftName} gönderdi`);
+    if (giftOverlayTimerRef.current) {
+      clearTimeout(giftOverlayTimerRef.current);
+    }
+    giftOverlayTimerRef.current = setTimeout(() => {
+      setGiftOverlayText(null);
+    }, 2800);
+
+    return () => {
+      if (giftOverlayTimerRef.current) {
+        clearTimeout(giftOverlayTimerRef.current);
+        giftOverlayTimerRef.current = null;
+      }
+    };
+  }, [giftEvents]);
 
   if (state.isLoading) {
     return (
@@ -648,6 +785,11 @@ export default function ViewerRoomClientPage() {
                 <div className="absolute left-3 top-3 z-20 flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-rose-500/90 px-3 py-1 text-[11px] font-bold text-white">Canli yayin</span>
                 </div>
+                {giftOverlayText ? (
+                  <div className="absolute bottom-3 left-3 right-3 z-20 rounded-xl border border-pink-200/70 bg-black/60 px-3 py-2 text-xs font-semibold text-pink-100 sm:left-auto sm:w-[420px]">
+                    {giftOverlayText}
+                  </div>
+                ) : null}
                 <div className="flex h-full items-center justify-center text-center">
                   <div className="absolute inset-0 rounded-3xl bg-[radial-gradient(circle_at_50%_30%,rgba(255,44,122,0.2),transparent_60%)]" />
                   <div className="relative w-full max-w-2xl">
@@ -656,7 +798,7 @@ export default function ViewerRoomClientPage() {
                     </span>
                     <h1 className="mt-4 text-2xl font-black text-white sm:text-3xl">{streamerName}</h1>
                     <p className="mt-3 text-sm text-zinc-300">
-                      Yayin canli. Sohbet ve hediye ozellikleri bir sonraki fazda aktif edilecek.
+                      Yayin canli. Sohbet aktif, hediyeler anlik olarak panelde gorunur.
                     </p>
                   </div>
                 </div>
@@ -726,21 +868,43 @@ export default function ViewerRoomClientPage() {
                   Henuz aktif hediye yok.
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  {giftCatalog.map((giftItem) => (
-                    <article key={giftItem.id} className="rounded-2xl border border-pink-100 bg-white p-3 shadow-sm">
-                      <p className="text-2xl leading-none">{giftItem.emoji}</p>
-                      <p className="mt-2 text-sm font-black text-zinc-800">{giftItem.name}</p>
-                      <p className="mt-1 text-xs font-semibold text-pink-600">{giftItem.price} coin</p>
-                      <button
-                        type="button"
-                        disabled
-                        className="mt-2 rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-500 disabled:cursor-not-allowed"
-                      >
-                        {isLive ? "Gonderme sonraki fazda baglanacak." : "Offline odada gonderim kapali."}
-                      </button>
-                    </article>
-                  ))}
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    {giftCatalog.map((giftItem) => (
+                      <article key={giftItem.id} className="rounded-2xl border border-pink-100 bg-white p-3 shadow-sm">
+                        <p className="text-2xl leading-none">{giftItem.emoji}</p>
+                        <p className="mt-2 text-sm font-black text-zinc-800">{giftItem.name}</p>
+                        <p className="mt-1 text-xs font-semibold text-pink-600">{giftItem.price} coin</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleSendGift(giftItem);
+                          }}
+                          disabled={isGiftSendDisabled}
+                          className="mt-2 rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 disabled:cursor-not-allowed disabled:text-zinc-400"
+                        >
+                          {pendingGiftId === giftItem.id ? "Gonderiliyor..." : "Gonder"}
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+
+                  <section className="rounded-2xl border border-pink-100 bg-white p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Son hediyeler</p>
+                    {giftEvents.length === 0 ? (
+                      <p className="mt-2 text-sm text-zinc-500">Bu odada henuz hediye yok.</p>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        {giftEvents.map((event) => (
+                          <article key={event.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2">
+                            <p className="text-sm text-zinc-700">
+                              <span className="font-semibold text-zinc-900">{event.senderName}</span> {event.giftEmoji} {event.giftName} gonderdi
+                            </p>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                 </div>
               )
             ) : (
@@ -835,8 +999,8 @@ export default function ViewerRoomClientPage() {
             ) : null}
             {activeTab === "chat" && chatValidationError ? <p className="mt-2 text-xs text-rose-600">{chatValidationError}</p> : null}
             {activeTab === "gift" && state.isLoggedIn ? (
-              <p className="mt-2 text-xs text-zinc-500">
-                {isLive ? "Gonderme sonraki fazda baglanacak." : "Offline odada hediye gonderimi kapali."}
+              <p className={`mt-2 text-xs ${giftFeedback ? "text-pink-600" : "text-zinc-500"}`}>
+                {giftFeedback || (isLive ? "Bir hediye secip anlik gonderim yapabilirsin." : "Offline odada hediye gonderimi kapali.")}
               </p>
             ) : null}
           </div>
