@@ -30,6 +30,14 @@ type AdminLiveRoom = {
     amount: number;
     createdAt: string;
   }>;
+  presenceUsers: Array<{
+    userId: string;
+    displayName: string;
+    role: string;
+    lastSeenAt: string;
+    isMuted: boolean;
+    isBanned: boolean;
+  }>;
 };
 
 type ApiResponse = {
@@ -54,12 +62,33 @@ function getAccessToken() {
   return supabase.auth.getSession().then(({ data: { session } }) => session?.access_token ?? null);
 }
 
+function getCurrentUserId() {
+  const supabase = getSupabaseClient();
+  return supabase.auth.getUser().then(({ data: { user } }) => user?.id ?? null);
+}
+
+function roleLabel(role: string) {
+  const normalized = role.trim().toLowerCase();
+  if (normalized === "owner") {
+    return "Owner";
+  }
+  if (normalized === "admin") {
+    return "Admin";
+  }
+  if (normalized === "streamer") {
+    return "Yayıncı";
+  }
+  return "Üye";
+}
+
 export default function AdminLivePage() {
   const { loading, authorized, message, signOut } = useAdminAccess();
   const [rooms, setRooms] = useState<AdminLiveRoom[]>([]);
   const [isLoadingRooms, setIsLoadingRooms] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [closingRoomId, setClosingRoomId] = useState<string | null>(null);
+  const [moderatingKey, setModeratingKey] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const summary = useMemo(() => {
@@ -108,12 +137,15 @@ export default function AdminLivePage() {
         return;
       }
 
-      const response = await fetch("/api/admin/live", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        cache: "no-store",
-      });
+      const [response, activeUserId] = await Promise.all([
+        fetch("/api/admin/live", {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          cache: "no-store",
+        }),
+        getCurrentUserId(),
+      ]);
       const payload = (await response.json().catch(() => ({}))) as ApiResponse;
       if (!response.ok || !payload.ok) {
         setFeedback({ type: "error", message: payload.message || "Canlı yayın verisi yüklenemedi." });
@@ -121,6 +153,7 @@ export default function AdminLivePage() {
         return;
       }
 
+      setCurrentUserId(activeUserId);
       setRooms(payload.rooms ?? []);
     } catch {
       setFeedback({ type: "error", message: "Canlı yayın verisi yüklenemedi." });
@@ -165,6 +198,82 @@ export default function AdminLivePage() {
       setFeedback({ type: "error", message: "Canlı yayın kapatılamadı." });
     } finally {
       setClosingRoomId(null);
+    }
+  }
+
+  async function handleModerationAction(params: {
+    roomId: string;
+    targetUserId: string;
+    action: "mute" | "unmute" | "kick" | "ban" | "unban";
+  }) {
+    const { roomId, targetUserId, action } = params;
+    const actionKey = `${roomId}:${targetUserId}:${action}`;
+    try {
+      setModeratingKey(actionKey);
+      setFeedback(null);
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        setFeedback({ type: "error", message: "Oturum bulunamadı. Tekrar giriş yap." });
+        return;
+      }
+
+      const response = await fetch(`/api/rooms/${roomId}/moderation`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          targetUserId,
+          action,
+          reason: "Admin panel müdahalesi",
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (!response.ok || !payload.ok) {
+        setFeedback({ type: "error", message: payload.message || "Moderasyon işlemi tamamlanamadı." });
+        return;
+      }
+
+      setRooms((previousRooms) =>
+        previousRooms.map((room) => {
+          if (room.id !== roomId) {
+            return room;
+          }
+
+          if (action === "kick" || action === "ban") {
+            return {
+              ...room,
+              viewerCount: Math.max(0, room.viewerCount - 1),
+              presenceUsers: room.presenceUsers.filter((user) => user.userId !== targetUserId),
+            };
+          }
+
+          if (action === "mute" || action === "unmute") {
+            return {
+              ...room,
+              presenceUsers: room.presenceUsers.map((user) =>
+                user.userId === targetUserId ? { ...user, isMuted: action === "mute" } : user,
+              ),
+            };
+          }
+
+          return room;
+        }),
+      );
+
+      const actionMessageByType: Record<typeof action, string> = {
+        mute: "Kullanıcı susturuldu.",
+        unmute: "Kullanıcının susturması kaldırıldı.",
+        kick: "Kullanıcı odadan çıkarıldı.",
+        ban: "Kullanıcıya oda banı uygulandı.",
+        unban: "Kullanıcının oda banı kaldırıldı.",
+      };
+      setFeedback({ type: "success", message: actionMessageByType[action] });
+    } catch {
+      setFeedback({ type: "error", message: "Moderasyon işlemi tamamlanamadı." });
+    } finally {
+      setModeratingKey(null);
     }
   }
 
@@ -282,6 +391,105 @@ export default function AdminLivePage() {
                       {giftItem.senderName} {giftItem.giftEmoji} {giftItem.giftName} · {giftItem.amount} dk
                     </article>
                   ))}
+                </div>
+              )}
+            </section>
+
+            <section className="mt-3 rounded-2xl border border-cyan-100 p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">Odadakiler</p>
+              {room.presenceUsers.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-500">Listelenecek aktif kullanıcı yok.</p>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {room.presenceUsers.map((presenceUser) => {
+                    const isOwner = presenceUser.userId === room.ownerId;
+                    const isSelf = Boolean(currentUserId) && presenceUser.userId === currentUserId;
+                    const disableReason = isOwner ? "Yayıncıya uygulanamaz" : isSelf ? "Kendine uygulanamaz" : null;
+                    const isMuteAction = presenceUser.isMuted ? "unmute" : "mute";
+                    const muteLabel = presenceUser.isMuted ? "Susturmayı Kaldır" : "Sustur";
+                    const muteActionKey = `${room.id}:${presenceUser.userId}:${isMuteAction}`;
+                    const kickActionKey = `${room.id}:${presenceUser.userId}:kick`;
+                    const banActionKey = `${room.id}:${presenceUser.userId}:ban`;
+                    const hasDisabledActions = Boolean(disableReason);
+                    return (
+                      <article
+                        key={`${room.id}-presence-${presenceUser.userId}`}
+                        data-testid={`admin-live-presence-row-${room.id}-${presenceUser.userId}`}
+                        className="rounded-xl bg-slate-50 px-3 py-3 text-sm text-slate-700"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold text-slate-800">{presenceUser.displayName}</p>
+                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                            {roleLabel(presenceUser.role)}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              presenceUser.isMuted ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                            }`}
+                          >
+                            {presenceUser.isMuted ? "Susturuldu" : "Aktif"}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              presenceUser.isBanned ? "bg-rose-100 text-rose-700" : "bg-slate-200 text-slate-700"
+                            }`}
+                          >
+                            {presenceUser.isBanned ? "Banlı" : "Normal"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">Son görülme: {formatDateTime(presenceUser.lastSeenAt)}</p>
+
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            data-testid={`admin-live-action-mute-${room.id}-${presenceUser.userId}`}
+                            onClick={() => {
+                              void handleModerationAction({
+                                roomId: room.id,
+                                targetUserId: presenceUser.userId,
+                                action: isMuteAction,
+                              });
+                            }}
+                            disabled={hasDisabledActions || moderatingKey === muteActionKey || presenceUser.isBanned}
+                            className="rounded-lg bg-indigo-100 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-200 disabled:opacity-60"
+                          >
+                            {moderatingKey === muteActionKey ? "İşleniyor..." : muteLabel}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`admin-live-action-kick-${room.id}-${presenceUser.userId}`}
+                            onClick={() => {
+                              void handleModerationAction({
+                                roomId: room.id,
+                                targetUserId: presenceUser.userId,
+                                action: "kick",
+                              });
+                            }}
+                            disabled={hasDisabledActions || moderatingKey === kickActionKey || presenceUser.isBanned}
+                            className="rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-200 disabled:opacity-60"
+                          >
+                            {moderatingKey === kickActionKey ? "İşleniyor..." : "Odadan Çıkar"}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`admin-live-action-ban-${room.id}-${presenceUser.userId}`}
+                            onClick={() => {
+                              void handleModerationAction({
+                                roomId: room.id,
+                                targetUserId: presenceUser.userId,
+                                action: "ban",
+                              });
+                            }}
+                            disabled={hasDisabledActions || moderatingKey === banActionKey || presenceUser.isBanned}
+                            className="rounded-lg bg-rose-100 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-200 disabled:opacity-60"
+                          >
+                            {moderatingKey === banActionKey ? "İşleniyor..." : "Oda Banı"}
+                          </button>
+                          {disableReason ? <span className="text-xs font-medium text-slate-500">{disableReason}</span> : null}
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </section>

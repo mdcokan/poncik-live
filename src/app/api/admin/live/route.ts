@@ -5,6 +5,8 @@ const ADMIN_ROLES = new Set(["admin", "owner"]);
 const ROOMS_LIMIT = 50;
 const MESSAGE_FETCH_LIMIT = 150;
 const GIFT_FETCH_LIMIT = 150;
+const PRESENCE_PER_ROOM_LIMIT = 50;
+const PRESENCE_TOTAL_FETCH_LIMIT = 1000;
 
 type RoomRow = {
   id: string;
@@ -17,6 +19,9 @@ type RoomRow = {
 
 type PresenceRow = {
   room_id: string;
+  user_id: string;
+  role: string | null;
+  last_seen_at: string;
 };
 
 type MessageRow = {
@@ -46,6 +51,16 @@ type GiftCatalogRow = {
   id: string;
   name: string;
   emoji: string;
+};
+
+type RoomMuteRow = {
+  room_id: string;
+  user_id: string;
+};
+
+type RoomBanRow = {
+  room_id: string;
+  user_id: string;
 };
 
 export const dynamic = "force-dynamic";
@@ -147,8 +162,14 @@ export async function GET(request: Request) {
 
     const roomIds = rooms.map((room) => room.id);
 
-    const [{ data: presenceRows }, { data: messageRows }, { data: giftRows }] = await Promise.all([
-      supabase.from("room_presence").select("room_id").in("room_id", roomIds),
+    const [{ data: presenceRows }, { data: messageRows }, { data: giftRows }, { data: roomMuteRows }, { data: roomBanRows }] =
+      await Promise.all([
+        supabase
+          .from("room_presence")
+          .select("room_id, user_id, role, last_seen_at")
+          .in("room_id", roomIds)
+          .order("last_seen_at", { ascending: false })
+          .limit(PRESENCE_TOTAL_FETCH_LIMIT),
       supabase
         .from("room_messages")
         .select("id, room_id, sender_id, body, created_at")
@@ -161,21 +182,26 @@ export async function GET(request: Request) {
         .in("room_id", roomIds)
         .order("created_at", { ascending: false })
         .limit(GIFT_FETCH_LIMIT),
-    ]);
+        supabase.from("room_mutes").select("room_id, user_id").in("room_id", roomIds),
+        supabase.from("room_bans").select("room_id, user_id").in("room_id", roomIds),
+      ]);
 
     const safePresenceRows = (presenceRows as PresenceRow[] | null) ?? [];
     const safeMessageRows = takeLastByRoom((messageRows as MessageRow[] | null) ?? [], 3);
     const safeGiftRows = takeLastByRoom((giftRows as GiftRow[] | null) ?? [], 3);
 
+    const safeRoomMuteRows = (roomMuteRows as RoomMuteRow[] | null) ?? [];
+    const safeRoomBanRows = (roomBanRows as RoomBanRow[] | null) ?? [];
     const ownerIds = rooms.map((room) => room.owner_id);
+    const presenceUserIds = safePresenceRows.map((presence) => presence.user_id);
     const messageSenderIds = safeMessageRows.map((message) => message.sender_id);
     const giftSenderIds = safeGiftRows.map((gift) => gift.sender_id);
-    const allProfileIds = Array.from(new Set([...ownerIds, ...messageSenderIds, ...giftSenderIds]));
+    const allProfileIds = Array.from(new Set([...ownerIds, ...presenceUserIds, ...messageSenderIds, ...giftSenderIds]));
     const allGiftIds = Array.from(new Set(safeGiftRows.map((gift) => gift.gift_id)));
 
     const [{ data: profileRows }, { data: giftCatalogRows }] = await Promise.all([
       allProfileIds.length
-        ? supabase.from("profiles").select("id, display_name").in("id", allProfileIds)
+        ? supabase.from("profiles").select("id, display_name, role").in("id", allProfileIds)
         : Promise.resolve({ data: [] as ProfileRow[] }),
       allGiftIds.length
         ? supabase.from("gift_catalog").select("id, name, emoji").in("id", allGiftIds)
@@ -185,6 +211,9 @@ export async function GET(request: Request) {
     const profileNameById = new Map<string, string>(
       ((profileRows as ProfileRow[] | null) ?? []).map((profile) => [profile.id, profile.display_name?.trim() || "Kullanıcı"]),
     );
+    const profileRoleById = new Map<string, string>(
+      ((profileRows as ProfileRow[] | null) ?? []).map((profile) => [profile.id, profile.role?.trim() || "viewer"]),
+    );
     const giftById = new Map<string, { name: string; emoji: string }>(
       ((giftCatalogRows as GiftCatalogRow[] | null) ?? []).map((gift) => [gift.id, { name: gift.name, emoji: gift.emoji }]),
     );
@@ -192,6 +221,38 @@ export async function GET(request: Request) {
     const viewerCountByRoomId = new Map<string, number>();
     for (const presenceRow of safePresenceRows) {
       viewerCountByRoomId.set(presenceRow.room_id, (viewerCountByRoomId.get(presenceRow.room_id) ?? 0) + 1);
+    }
+
+    const mutedUserKeys = new Set(safeRoomMuteRows.map((mute) => `${mute.room_id}:${mute.user_id}`));
+    const bannedUserKeys = new Set(safeRoomBanRows.map((ban) => `${ban.room_id}:${ban.user_id}`));
+    const presenceUsersByRoomId = new Map<
+      string,
+      Array<{
+        userId: string;
+        displayName: string;
+        role: string;
+        lastSeenAt: string;
+        isMuted: boolean;
+        isBanned: boolean;
+      }>
+    >();
+    const presenceCountsByRoomId = new Map<string, number>();
+    for (const presenceRow of safePresenceRows) {
+      const count = presenceCountsByRoomId.get(presenceRow.room_id) ?? 0;
+      if (count >= PRESENCE_PER_ROOM_LIMIT) {
+        continue;
+      }
+      const roomPresenceUsers = presenceUsersByRoomId.get(presenceRow.room_id) ?? [];
+      roomPresenceUsers.push({
+        userId: presenceRow.user_id,
+        displayName: profileNameById.get(presenceRow.user_id) ?? "Kullanıcı",
+        role: profileRoleById.get(presenceRow.user_id) ?? presenceRow.role?.trim() ?? "viewer",
+        lastSeenAt: presenceRow.last_seen_at,
+        isMuted: mutedUserKeys.has(`${presenceRow.room_id}:${presenceRow.user_id}`),
+        isBanned: bannedUserKeys.has(`${presenceRow.room_id}:${presenceRow.user_id}`),
+      });
+      presenceUsersByRoomId.set(presenceRow.room_id, roomPresenceUsers);
+      presenceCountsByRoomId.set(presenceRow.room_id, count + 1);
     }
 
     const messagesByRoomId = new Map<
@@ -248,6 +309,7 @@ export async function GET(request: Request) {
       viewerCount: viewerCountByRoomId.get(room.id) ?? 0,
       lastMessages: messagesByRoomId.get(room.id) ?? [],
       lastGifts: giftsByRoomId.get(room.id) ?? [],
+      presenceUsers: presenceUsersByRoomId.get(room.id) ?? [],
     }));
 
     return noStoreJson({
