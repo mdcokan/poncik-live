@@ -111,7 +111,9 @@ test("admin kullanıcı yönetimi ban/unban ve rol güncelleme", async ({ browse
     await loginMemberAllowRestricted(memberPage, MEMBER_EMAIL, PASSWORD);
     await memberPage.goto("/member");
     await expect(memberPage).toHaveURL(/\/member(?:\/|$)/);
-    await expect(memberPage.getByText(/hesab[ıi]n[ıi]z k[ıi]s[ıi]tlanm[ıi][şs]t[ıi]r/i).first()).toBeVisible({ timeout: 20_000 });
+    const bannedAlert = memberPage.getByTestId("member-banned-alert");
+    await expect(bannedAlert).toBeVisible({ timeout: 20_000 });
+    await expect(bannedAlert).toContainText("Hesabınız kısıtlanmıştır.");
 
     await adminPage.goto("/admin/users");
     await searchInput.fill("Veli");
@@ -132,8 +134,11 @@ test("admin kullanıcı yönetimi ban/unban ve rol güncelleme", async ({ browse
       successUrl: /\/member(?:\/|$)/,
     });
     await memberPageAfterUnban.goto("/member");
-    await expect(memberPageAfterUnban.getByText(/hesab[ıi]n[ıi]z k[ıi]s[ıi]tlanm[ıi][şs]t[ıi]r/i)).toHaveCount(0);
-    await expect(memberPageAfterUnban.getByText(/uye ana ekran|üye ana ekran/i).first()).toBeVisible({ timeout: 20_000 });
+    await memberPageAfterUnban.reload();
+    await expect(memberPageAfterUnban.getByTestId("member-banned-alert")).toHaveCount(0);
+    await expect(
+      memberPageAfterUnban.getByText(/dakika bakiyem|online yay[ıi]nc[ıi]lar/i).first(),
+    ).toBeVisible({ timeout: 20_000 });
 
     await adminPage.goto("/admin/users");
     await searchInput.fill("Eda");

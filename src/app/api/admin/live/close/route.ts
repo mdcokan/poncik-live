@@ -46,6 +46,7 @@ export async function POST(request: Request) {
   }
 
   const roomId = typeof payload.roomId === "string" ? payload.roomId.trim() : "";
+  const reason = typeof payload.reason === "string" ? payload.reason.trim() : null;
   if (!roomId) {
     return noStoreJson({ ok: false, message: "roomId zorunlu." }, { status: 400 });
   }
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
 
     const { data: closedRooms, error: closeRpcError } = await authSupabase.rpc("admin_close_live_room", {
       p_room_id: roomId,
+      p_reason: reason,
     });
     if (closeRpcError) {
       if (closeRpcError.message.includes("ROOM_NOT_LIVE")) {

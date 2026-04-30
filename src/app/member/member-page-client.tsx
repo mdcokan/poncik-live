@@ -299,7 +299,7 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                 data-testid="open-member-packages"
                 onClick={() => void handleOpenPackages()}
                 disabled={isBanned}
-                className="rounded-full bg-pink-400 px-3 py-1 text-xs font-semibold text-white transition hover:bg-pink-300"
+                className="rounded-full bg-pink-400 px-3 py-1 text-xs font-semibold text-white transition hover:bg-pink-300 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-pink-400"
               >
                 Dakika Yükle
               </button>
@@ -312,9 +312,16 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
             </p>
           ) : null}
           {isBanned ? (
-            <p className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              Hesabınız kısıtlanmıştır. Kritik işlemler geçici olarak kapatılmıştır.
-            </p>
+            <section
+              data-testid="member-banned-alert"
+              className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+            >
+              <p className="font-semibold">Hesabınız kısıtlanmıştır.</p>
+              <p className="mt-1">
+                Canlı yayınlara katılma, mesaj yazma, hediye gönderme ve dakika satın alma işlemleri geçici olarak
+                kapatılmıştır.
+              </p>
+            </section>
           ) : null}
 
           <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
@@ -435,7 +442,7 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                       <button
                         type="button"
                         disabled={isSubmittingPackageId === item.id || isBanned}
-                        className="mt-4 rounded-xl bg-pink-400 px-3 py-2 text-xs font-semibold text-white transition hover:bg-pink-300"
+                        className="mt-4 rounded-xl bg-pink-400 px-3 py-2 text-xs font-semibold text-white transition hover:bg-pink-300 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-pink-400"
                         onClick={() => void handleCreateOrder(item)}
                       >
                         {isSubmittingPackageId === item.id ? "Gönderiliyor..." : "Satın Al"}

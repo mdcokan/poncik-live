@@ -14,6 +14,7 @@ type AdminLayoutProps = {
 const menuItems = [
   { label: "Dashboard", href: "/admin" },
   { label: "Uyeler", href: "/admin/users" },
+  { label: "İşlem Geçmişi", href: "/admin/logs" },
   { label: "Yayincilar", href: "/admin/streamers" },
   { label: "Canli Yayinlar", href: "/admin/live" },
   { label: "Kazanc / Finans", href: "/admin/finance" },
