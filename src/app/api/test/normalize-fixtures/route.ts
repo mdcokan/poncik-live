@@ -189,6 +189,43 @@ export async function POST(request: Request) {
       }
     }
 
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+      const fixtureMaintenanceClient = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { error: cleanupWithdrawalError } = await fixtureMaintenanceClient
+        .from("streamer_withdrawal_requests")
+        .delete()
+        .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id);
+      if (cleanupWithdrawalError) {
+        throw new Error(`Failed to clean fixture streamer withdrawals: ${cleanupWithdrawalError.message}`);
+      }
+    } else {
+      const { data: pendingWithdrawalRows, error: pendingWithdrawalListError } = await adminClient
+        .from("streamer_withdrawal_requests")
+        .select("id")
+        .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id)
+        .eq("status", "pending");
+      if (pendingWithdrawalListError) {
+        throw new Error(`Failed to list fixture pending withdrawals: ${pendingWithdrawalListError.message}`);
+      }
+      for (const row of pendingWithdrawalRows ?? []) {
+        const { error: cancelError } = await adminClient.rpc("decide_streamer_withdrawal_request", {
+          p_request_id: row.id,
+          p_decision: "cancelled",
+          p_admin_note: "fixture normalize",
+        });
+        if (cancelError) {
+          const msg = cancelError.message ?? "";
+          if (msg.includes("REQUEST_NOT_PENDING") || msg.includes("REQUEST_NOT_FOUND")) {
+            continue;
+          }
+          throw new Error(`Failed to cancel fixture streamer withdrawal: ${cancelError.message}`);
+        }
+      }
+    }
+
     const { data: wallet } = await adminClient.from("wallets").select("balance").eq("user_id", fixtureUsers[VIEWER_EMAIL].id).maybeSingle();
     const currentBalance = typeof wallet?.balance === "number" ? wallet.balance : 0;
     if (currentBalance < 500) {
