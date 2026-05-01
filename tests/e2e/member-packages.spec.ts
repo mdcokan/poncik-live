@@ -96,8 +96,8 @@ test("member sees active package and hidden when package is deactivated", async 
     await memberPage.goto("/member");
     await expect(memberPage).toHaveURL(/\/member(?:\/|$)/);
 
-    await memberPage.getByTestId("open-member-packages").click();
-    await expect(memberPage.getByTestId("member-packages-modal")).toBeVisible();
+    await memberPage.getByTestId("member-minute-load-button").click();
+    await expect(memberPage.getByTestId("member-section-packages")).toBeVisible();
     await expect(memberPage.getByRole("heading", { name: "Dakika Paketleri" })).toBeVisible();
     await expect(memberPage.getByText(PACKAGE_NAME)).toBeVisible({ timeout: 20_000 });
 
@@ -117,8 +117,8 @@ test("member sees active package and hidden when package is deactivated", async 
 
     await memberPage.bringToFront();
     await memberPage.reload();
-    await memberPage.getByTestId("open-member-packages").click();
-    await expect(memberPage.getByTestId("member-packages-modal")).toBeVisible();
+    await memberPage.getByTestId("member-minute-load-button").click();
+    await expect(memberPage.getByTestId("member-section-packages")).toBeVisible();
     await expect(memberPage.getByText(PACKAGE_NAME)).toHaveCount(0);
   } finally {
     await memberContext.close().catch(() => {});

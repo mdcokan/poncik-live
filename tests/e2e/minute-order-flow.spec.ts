@@ -96,8 +96,8 @@ test("member creates minute order and admin approves it", async ({ browser }) =>
     await memberPage.goto("/member");
     const initialBalance = await readMemberWalletBalance(memberPage);
 
-    await memberPage.getByTestId("open-member-packages").click();
-    await expect(memberPage.getByTestId("member-packages-modal")).toBeVisible();
+    await memberPage.getByTestId("member-minute-load-button").click();
+    await expect(memberPage.getByTestId("member-section-packages")).toBeVisible();
     await expect(memberPage.getByRole("heading", { name: PACKAGE_NAME }).first()).toBeVisible({ timeout: 20_000 });
     await memberPage
       .locator("article")
@@ -135,7 +135,7 @@ test("member creates minute order and admin approves it", async ({ browser }) =>
       .toBeGreaterThanOrEqual(initialBalance + 150);
 
     await memberPage.reload();
-    await memberPage.getByTestId("open-member-packages").click();
+    await memberPage.getByTestId("member-minute-load-button").click();
     const refreshedOrdersSection = memberPage
       .getByRole("heading", { name: "Son taleplerim" })
       .locator("xpath=ancestor::section[1]");
