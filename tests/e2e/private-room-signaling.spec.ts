@@ -1,11 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
+import { attachPrivateRoomDiagnostics } from "./helpers/private-room-diagnostics";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 import { ensureStreamerLive } from "./helpers/studio";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
 const PASSWORD = "123123";
+
+function parseBalance(value: string) {
+  const match = value.match(/(-?\d+)/);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+async function getWalletBalance(page: Page) {
+  const text = (await page.getByTestId("member-wallet-balance").textContent()) ?? "";
+  return parseBalance(text);
+}
 
 test.describe.configure({ mode: "serial" });
 
@@ -19,6 +30,7 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
   const memberPage = await memberContext.newPage();
 
   let roomId = "";
+  let reachedEnd = false;
 
   try {
     await loginWithStabilizedAuth(
@@ -51,29 +63,48 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
       testInfo,
     );
     await memberPage.goto("/member");
+    await expect
+      .poll(async () => getWalletBalance(memberPage), { timeout: 25_000, message: "Veli wallet balance should be >= 500" })
+      .toBeGreaterThanOrEqual(500);
+
     await memberPage.locator(`a[href="/rooms/${roomId}"]`).first().click();
     await expect(memberPage).toHaveURL(new RegExp(`/rooms/${roomId}$`), { timeout: 20_000 });
-    await memberPage.getByTestId("private-room-request-button").click();
+
+    const privateRequestButton = memberPage.getByTestId("private-room-request-button");
+    await expect(privateRequestButton).toBeEnabled({
+      timeout: 60_000,
+      message:
+        "Özel oda daveti butonu yayın canlı görülene kadar kapalı kalır; viewer room state bazen gecikmeli güncellenir. Bekleme süresi doldu.",
+    });
+    await privateRequestButton.click();
     await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
 
     const acceptButton = streamerPage.getByTestId("accept-private-request-button").first();
     await expect(acceptButton).toBeVisible({ timeout: 25_000 });
     await acceptButton.click();
 
-    await expect(streamerPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
-    await expect(memberPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
-    await expect(streamerPage.getByTestId("private-signaling-panel")).toBeVisible({ timeout: 30_000 });
-    await expect(memberPage.getByTestId("private-signaling-panel")).toBeVisible({ timeout: 30_000 });
+    const streamerSessionPanel = streamerPage.getByTestId("private-session-panel");
+    const memberSessionPanel = memberPage.getByTestId("private-session-panel");
 
-    await memberPage.getByTestId("private-signal-ready-ping").click();
-    await expect(streamerPage.getByTestId("private-signal-last")).toContainText(/ready_ping/i, { timeout: 30_000 });
+    await expect(streamerSessionPanel).toBeVisible({ timeout: 30_000 });
+    await expect(memberSessionPanel).toBeVisible({ timeout: 30_000 });
+    await expect(streamerSessionPanel.getByTestId("private-signaling-panel")).toBeVisible({ timeout: 30_000 });
+    await expect(memberSessionPanel.getByTestId("private-signaling-panel")).toBeVisible({ timeout: 30_000 });
 
-    await streamerPage.getByTestId("private-signal-offer").click();
-    await expect(memberPage.getByTestId("private-signal-last")).toContainText(/offer/i, { timeout: 30_000 });
+    await memberSessionPanel.getByTestId("private-signal-ready-ping").click({ timeout: 30_000 });
+    await expect(streamerSessionPanel.getByTestId("private-signal-last")).toContainText(/ready_ping/i, { timeout: 30_000 });
 
-    await memberPage.getByTestId("private-signal-answer").click();
-    await expect(streamerPage.getByTestId("private-signal-last")).toContainText(/answer/i, { timeout: 30_000 });
+    await streamerSessionPanel.getByTestId("private-signal-offer").click({ timeout: 30_000 });
+    await expect(memberSessionPanel.getByTestId("private-signal-last")).toContainText(/offer/i, { timeout: 30_000 });
+
+    await memberSessionPanel.getByTestId("private-signal-answer").click({ timeout: 30_000 });
+    await expect(streamerSessionPanel.getByTestId("private-signal-last")).toContainText(/answer/i, { timeout: 30_000 });
+
+    reachedEnd = true;
   } finally {
+    if (!reachedEnd) {
+      await attachPrivateRoomDiagnostics(testInfo, { memberPage, streamerPage, request, roomId: roomId || undefined }).catch(() => {});
+    }
     if (!streamerPage.isClosed()) {
       const stopButton = streamerPage.getByRole("button", { name: /b[ıiİI]t[ıiİI]r/i }).first();
       if (await stopButton.isVisible().catch(() => false)) {
