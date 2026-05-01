@@ -6,6 +6,7 @@ import type { LiveRoom } from "@/lib/live-rooms";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { useRealtimeLiveRooms } from "@/hooks/use-realtime-live-rooms";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
+import { DirectMessagesPanel } from "@/components/dm/DirectMessagesPanel";
 
 type MemberPageClientProps = {
   initialRooms: LiveRoom[];
@@ -856,16 +857,9 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
       return (
         <div data-testid="member-section-messages" className="rounded-3xl bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-indigo-800">Mesajlarım</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Özel mesajlaşma altyapısı bir sonraki fazda bağlanacak.
-          </p>
-          <div className="mt-6 grid gap-4 lg:grid-cols-[240px_1fr]">
-            <aside className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-4 text-sm text-slate-600">
-              Henüz mesajlaşman yok.
-            </aside>
-            <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-6 text-sm text-slate-600">
-              Bir sohbet seçildiğinde mesajlar burada görünecek.
-            </div>
+          <p className="mt-2 text-sm text-slate-600">Özel mesajlarını buradan yönetebilirsin.</p>
+          <div className="mt-6">
+            <DirectMessagesPanel currentUserRole="viewer" banned={isBanned} />
           </div>
         </div>
       );

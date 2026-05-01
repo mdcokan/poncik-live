@@ -3,12 +3,15 @@
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { DirectMessagesPanel } from "@/components/dm/DirectMessagesPanel";
 
 type UserRole = "viewer" | "streamer" | "admin" | "owner";
 
-const menuItems = [
+type StreamerMenuItem = { label: string; href: string; section?: "messages" };
+
+const menuItems: StreamerMenuItem[] = [
   { label: "Online OL", href: "/studio" },
-  { label: "Mesajlarim", href: "#" },
+  { label: "Mesajlarim", href: "#", section: "messages" },
   { label: "Ozel Oda Kazanclarim", href: "#" },
   { label: "Yayin Ozetim", href: "#" },
   { label: "Profil Guncelle", href: "/profile" },
@@ -64,6 +67,7 @@ function getSupabaseClient() {
 }
 
 export default function StreamerPage() {
+  const [activeSection, setActiveSection] = useState<"dashboard" | "messages">("dashboard");
   const [errorMessage, setErrorMessage] = useState("");
   const [isBanned, setIsBanned] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -201,21 +205,41 @@ export default function StreamerPage() {
         <aside className="rounded-3xl bg-gradient-to-b from-indigo-700 to-violet-700 p-4 text-white">
           <h2 className="px-2 text-sm font-semibold uppercase tracking-[0.2em] text-pink-200">Yayinci Paneli</h2>
           <nav className="mt-3 space-y-2">
-            {menuItems.map((item) =>
-              item.href === "/studio" && isBanned ? (
-                <span key={item.label} className="block cursor-not-allowed rounded-2xl bg-white/10 px-4 py-2.5 text-sm opacity-60">
-                  {item.label}
-                </span>
-              ) : (
+            {menuItems.map((item) => {
+              if (item.section === "messages") {
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    data-testid="streamer-sidebar-messages"
+                    onClick={() => setActiveSection("messages")}
+                    className={[
+                      "block w-full rounded-2xl px-4 py-2.5 text-left text-sm transition",
+                      activeSection === "messages" ? "bg-white text-indigo-800 shadow-sm" : "bg-white/10 text-white hover:bg-white/20",
+                    ].join(" ")}
+                  >
+                    {item.label}
+                  </button>
+                );
+              }
+              if (item.href === "/studio" && isBanned) {
+                return (
+                  <span key={item.label} className="block cursor-not-allowed rounded-2xl bg-white/10 px-4 py-2.5 text-sm opacity-60">
+                    {item.label}
+                  </span>
+                );
+              }
+              return (
                 <Link
                   key={item.label}
                   href={item.href}
+                  onClick={() => setActiveSection("dashboard")}
                   className="block rounded-2xl bg-white/10 px-4 py-2.5 text-sm transition hover:bg-white/20"
                 >
                   {item.label}
                 </Link>
-              ),
-            )}
+              );
+            })}
           </nav>
           <button
             type="button"
@@ -240,6 +264,18 @@ export default function StreamerPage() {
             </p>
           ) : null}
 
+          {activeSection === "messages" ? (
+            <div data-testid="streamer-section-messages" className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="text-lg font-semibold text-indigo-800">Mesajlarim</h2>
+              <p className="mt-2 text-sm text-slate-600">Uye ve yayıncı özel mesajların.</p>
+              <div className="mt-6">
+                <DirectMessagesPanel currentUserRole="streamer" banned={isBanned} />
+              </div>
+            </div>
+          ) : null}
+
+          {activeSection === "dashboard" ? (
+            <>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <article className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
               <h2 className="text-sm font-semibold text-slate-500">Bugunku ozel oda kazanci</h2>
@@ -356,6 +392,8 @@ export default function StreamerPage() {
               ) : null}
             </div>
           </div>
+            </>
+          ) : null}
         </section>
       </div>
     </main>
