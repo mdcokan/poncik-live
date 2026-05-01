@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
-import { waitForLiveRoomByStreamerName } from "./helpers/live-room";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import { ensureStreamerLive } from "./helpers/studio";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -69,15 +69,7 @@ test("private room session starts and charges member minutes", async ({ browser,
       testInfo,
     );
     await streamerPage.goto("/studio");
-    const startButton = streamerPage.getByRole("button", { name: /ba[sş]la/i }).first();
-    const stopButton = streamerPage.getByRole("button", { name: /b[ıiİI]t[ıiİI]r/i }).first();
-    if (await stopButton.isVisible().catch(() => false)) {
-      await stopButton.click();
-      await expect(startButton).toBeVisible({ timeout: 20_000 });
-    }
-    await startButton.click();
-    await expect(stopButton).toBeVisible({ timeout: 20_000 });
-    roomId = (await waitForLiveRoomByStreamerName(request, /Eda/i)).id;
+    roomId = (await ensureStreamerLive(streamerPage, request, { waitRoomTimeoutMs: 60_000 })).id;
 
     await loginWithStabilizedAuth(
       memberPage,

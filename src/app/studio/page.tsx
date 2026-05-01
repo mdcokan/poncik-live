@@ -75,6 +75,10 @@ type PrivateSessionSummary = {
   estimatedChargedMinutes?: number;
   estimatedRemainingMinutes?: number;
   isLowBalance?: boolean;
+  viewerReady?: boolean;
+  streamerReady?: boolean;
+  viewerReadyAt?: string | null;
+  streamerReadyAt?: string | null;
 };
 
 type PrivateSessionApiResponse = {
@@ -96,6 +100,29 @@ type EndSessionApiResponse = {
     streamerEarnedMinutes?: number;
     platformFeeMinutes?: number;
   };
+};
+
+type ReadyStateApiResponse = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  readyState?: {
+    sessionId?: string;
+    viewerReady?: boolean;
+    streamerReady?: boolean;
+    viewerReadyAt?: string | null;
+    streamerReadyAt?: string | null;
+  };
+};
+
+type PrivateRoomSessionRealtimeRow = {
+  id: string;
+  room_id: string;
+  status: string;
+  viewer_ready: boolean;
+  streamer_ready: boolean;
+  viewer_ready_at: string | null;
+  streamer_ready_at: string | null;
 };
 
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -763,7 +790,31 @@ export default function StudioPage() {
           table: "private_room_sessions",
           filter: `streamer_id=eq.${ownerId}`,
         },
-        () => {
+        (payload) => {
+          const row = (payload.new ?? payload.old ?? null) as PrivateRoomSessionRealtimeRow | null;
+          if (!row) {
+            return;
+          }
+          if (payload.eventType === "UPDATE" && activePrivateSession?.sessionId && row.id === activePrivateSession.sessionId) {
+            if (row.status !== "active") {
+              void fetchActivePrivateSession();
+              return;
+            }
+            setActivePrivateSession((previous) => {
+              if (!previous || previous.sessionId !== row.id) {
+                return previous;
+              }
+              return {
+                ...previous,
+                status: row.status,
+                viewerReady: row.viewer_ready,
+                streamerReady: row.streamer_ready,
+                viewerReadyAt: row.viewer_ready_at,
+                streamerReadyAt: row.streamer_ready_at,
+              };
+            });
+            return;
+          }
           void fetchActivePrivateSession();
         },
       )
@@ -772,7 +823,7 @@ export default function StudioPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+  }, [activePrivateSession?.sessionId, activeRoom?.id, activeRoom?.status, ownerId]);
 
   useEffect(() => {
     if (!activeRoom?.id || activeRoom.status !== "live" || !ownerId || role !== "streamer") {
@@ -996,14 +1047,61 @@ export default function StudioPage() {
       }
       const nextSession = payload.session && payload.session.roomId === activeRoom.id ? payload.session : null;
       setActivePrivateSession((previous) => {
-        if (previous?.sessionId && !nextSession?.sessionId && !privateSessionResult) {
-          setPrivateSessionResult("Özel oda kapatıldı.");
+        if (previous?.sessionId && !nextSession?.sessionId) {
+          setPrivateSessionResult((message) => {
+            if (!message || message === "Session başladı") {
+              return "Özel oda kapatıldı.";
+            }
+            return message;
+          });
         }
         return nextSession;
       });
     } catch {
       // keep stale value on transient failures
     }
+  }
+
+  async function updatePrivateSessionReadyState(ready: boolean) {
+    if (!activePrivateSession?.sessionId) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+    const supabase = getSupabase();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) {
+      setPrivateSessionError("Giriş doğrulaması yapılamadı.");
+      throw new Error("AUTH_REQUIRED");
+    }
+    const response = await fetch(`/api/private-sessions/${activePrivateSession.sessionId}/ready`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ ready }),
+      cache: "no-store",
+    });
+    const payload = (await response.json().catch(() => ({}))) as ReadyStateApiResponse;
+    if (!response.ok || !payload.ok || !payload.readyState) {
+      setPrivateSessionError(payload.message || "Hazır durumu güncellenemedi.");
+      throw new Error(payload.code || "READY_UPDATE_FAILED");
+    }
+    setPrivateSessionError(null);
+    setActivePrivateSession((previous) => {
+      if (!previous || previous.sessionId !== payload.readyState?.sessionId) {
+        return previous;
+      }
+      return {
+        ...previous,
+        viewerReady: Boolean(payload.readyState.viewerReady),
+        streamerReady: Boolean(payload.readyState.streamerReady),
+        viewerReadyAt: payload.readyState.viewerReadyAt ?? null,
+        streamerReadyAt: payload.readyState.streamerReadyAt ?? null,
+      };
+    });
   }
 
   async function startPrivateSession(requestId: string) {
@@ -1637,10 +1735,13 @@ export default function StudioPage() {
                     streamerName={activePrivateSession.streamerName}
                     startedAt={activePrivateSession.startedAt}
                     currentUserRole="streamer"
+                    viewerReady={activePrivateSession.viewerReady}
+                    streamerReady={activePrivateSession.streamerReady}
                     viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
                     initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
                     autoEndWhenBalanceLikelyDepleted={false}
                     onEnd={endPrivateSession}
+                    onReadyChange={updatePrivateSessionReadyState}
                     isEnding={isPrivateSessionEnding}
                     resultText={privateSessionResult ?? undefined}
                     errorText={privateSessionError ?? undefined}
