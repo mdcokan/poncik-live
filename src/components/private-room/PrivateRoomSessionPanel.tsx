@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import PrivateRoomMediaPrep from "@/components/private-room/PrivateRoomMediaPrep";
 
 type PrivateRoomSessionPanelProps = {
   sessionId: string;
@@ -45,7 +46,7 @@ function PlaceholderCard({ title, name }: { title: string; name: string }) {
         </div>
         <div>
           <p className="text-sm font-semibold text-zinc-900">{name}</p>
-          <p className="text-xs text-zinc-500">Kamera bağlantısı sonraki fazda bağlanacak</p>
+          <p className="text-xs text-zinc-500">Karşı taraf kamera bağlantısı sonraki fazda bağlanacak.</p>
         </div>
       </div>
     </article>
@@ -71,6 +72,7 @@ export default function PrivateRoomSessionPanel({
 }: PrivateRoomSessionPanelProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isAutoEnding, setIsAutoEnding] = useState(false);
+  const [localReady, setLocalReady] = useState(false);
   const autoEndTriggeredRef = useRef(false);
   const startedTimestamp = useMemo(() => new Date(startedAt).getTime(), [startedAt]);
   const estimatedChargedMinutes = useMemo(() => Math.max(1, Math.ceil(elapsedSeconds / 60)), [elapsedSeconds]);
@@ -140,8 +142,29 @@ export default function PrivateRoomSessionPanel({
       <p className="mt-1 text-sm text-violet-800">Bu fazda kamera altyapısı hazırlık ekranı olarak gösteriliyor.</p>
 
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <PlaceholderCard title="Yayıncı" name={`Yayıncı ${streamerName}`} />
-        <PlaceholderCard title="Üye" name={`Üye ${viewerName}`} />
+        {currentUserRole === "streamer" ? (
+          <>
+            <PrivateRoomMediaPrep
+              roleLabel="Yayıncı"
+              participantName={`Yayıncı ${streamerName}`}
+              onReadyChange={(ready) => setLocalReady(ready)}
+            />
+            <PlaceholderCard title="Üye" name={`Üye ${viewerName}`} />
+          </>
+        ) : (
+          <>
+            <PlaceholderCard title="Yayıncı" name={`Yayıncı ${streamerName}`} />
+            <PrivateRoomMediaPrep roleLabel="Üye" participantName={`Üye ${viewerName}`} onReadyChange={(ready) => setLocalReady(ready)} />
+          </>
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${localReady ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>
+          {localReady ? "Ben hazırım" : "Ben hazır değilim"}
+        </span>
+        <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-600">
+          Karşı taraf hazırlık durumu sonraki fazda bağlanacak.
+        </span>
       </div>
 
       <p className="mt-4 text-sm font-semibold text-zinc-800" data-testid="private-session-timer">
