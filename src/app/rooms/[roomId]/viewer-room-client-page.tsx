@@ -16,6 +16,7 @@ import {
   LIVE_ROOMS_BROADCAST_CHANNEL,
   LIVE_ROOMS_CHANGED_EVENT,
 } from "@/lib/supabase-browser";
+import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
 
 type RoomRow = {
   id: string;
@@ -98,6 +99,7 @@ type EndSessionApiResponse = {
   code?: string;
   message?: string;
   session?: {
+    durationSeconds?: number;
     chargedMinutes?: number;
   };
 };
@@ -227,6 +229,7 @@ export default function ViewerRoomClientPage() {
   const [showInsufficientMinutesModal, setShowInsufficientMinutesModal] = useState(false);
   const [activePrivateSession, setActivePrivateSession] = useState<PrivateSessionSummary | null>(null);
   const [privateSessionResult, setPrivateSessionResult] = useState<string | null>(null);
+  const [privateSessionError, setPrivateSessionError] = useState<string | null>(null);
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
   const messageIdsRef = useRef(new Set<string>());
@@ -873,18 +876,6 @@ export default function ViewerRoomClientPage() {
   }, [state.userId]);
 
   useEffect(() => {
-    if (!state.userId || !state.isLoggedIn) {
-      return;
-    }
-    const timer = setInterval(() => {
-      void fetchActivePrivateSession();
-    }, 3000);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [state.isLoggedIn, state.userId]);
-
-  useEffect(() => {
     if (!roomId || !isLive || !state.isLoggedIn || !state.userId || isRoomBanned || isRoomKicked) {
       return;
     }
@@ -1067,7 +1058,7 @@ export default function ViewerRoomClientPage() {
       if (!response.ok || !payload.ok) {
         return;
       }
-      setActivePrivateSession(payload.session ?? null);
+      setActivePrivateSession(payload.session && payload.session.roomId === roomId ? payload.session : null);
     } catch {
       // keep stale value on transient errors
     }
@@ -1079,6 +1070,7 @@ export default function ViewerRoomClientPage() {
     }
     setIsPrivateSessionStarting(true);
     setPrivateSessionResult(null);
+    setPrivateSessionError(null);
     try {
       const supabase = getSupabaseBrowserClient();
       const {
@@ -1125,6 +1117,7 @@ export default function ViewerRoomClientPage() {
     }
     setIsPrivateSessionEnding(true);
     setPrivateSessionResult(null);
+    setPrivateSessionError(null);
     try {
       const supabase = getSupabaseBrowserClient();
       const {
@@ -1145,14 +1138,16 @@ export default function ViewerRoomClientPage() {
       });
       const payload = (await response.json().catch(() => ({}))) as EndSessionApiResponse;
       if (!response.ok || !payload.ok) {
-        setPrivateSessionResult(payload.message || "Özel oda kapatılamadı.");
+        setPrivateSessionError(payload.message || "Özel oda kapatılamadı.");
         return;
       }
-      const spent = payload.session?.chargedMinutes ?? 0;
+      const spent =
+        payload.session?.chargedMinutes ??
+        (typeof payload.session?.durationSeconds === "number" ? Math.max(1, Math.ceil(payload.session.durationSeconds / 60)) : 0);
       setPrivateSessionResult(`Özel oda kapatıldı. Harcanan süre: ${spent} dk`);
       setActivePrivateSession(null);
     } catch {
-      setPrivateSessionResult("Özel oda kapatılamadı.");
+      setPrivateSessionError("Özel oda kapatılamadı.");
     } finally {
       setIsPrivateSessionEnding(false);
     }
@@ -1397,27 +1392,26 @@ export default function ViewerRoomClientPage() {
             )
           ) : null}
           {activePrivateSession ? (
-            <section className="mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-3" data-testid="private-session-panel">
-              <p className="text-sm font-semibold text-violet-800">Özel oda aktif</p>
-              <p className="mt-1 text-xs text-violet-700">
-                Şu an özel oda oturumundasınız. Kamera altyapısı bir sonraki fazda bağlanacak.
-              </p>
-              <button
-                type="button"
-                data-testid="private-session-end-button"
-                onClick={() => {
-                  void endPrivateSession();
-                }}
-                disabled={isPrivateSessionEnding}
-                className="mt-3 rounded-xl bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-              >
-                {isPrivateSessionEnding ? "Bitiriliyor..." : "Özel Odayı Bitir"}
-              </button>
-            </section>
+            <PrivateRoomSessionPanel
+              sessionId={activePrivateSession.sessionId}
+              viewerName={activePrivateSession.viewerName}
+              streamerName={activePrivateSession.streamerName}
+              startedAt={activePrivateSession.startedAt}
+              currentUserRole="viewer"
+              onEnd={endPrivateSession}
+              isEnding={isPrivateSessionEnding}
+              resultText={privateSessionResult ?? undefined}
+              errorText={privateSessionError ?? undefined}
+            />
           ) : null}
-          {privateSessionResult ? (
+          {!activePrivateSession && privateSessionResult ? (
             <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-session-result">
               {privateSessionResult}
+            </p>
+          ) : null}
+          {!activePrivateSession && privateSessionError ? (
+            <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-session-error">
+              {privateSessionError}
             </p>
           ) : null}
         </div>

@@ -15,6 +15,7 @@ import {
   LIVE_ROOMS_CHANGED_EVENT,
   getSupabaseBrowserClient,
 } from "@/lib/supabase-browser";
+import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
 
 type RoomStatus = "offline" | "live" | "private";
 
@@ -80,9 +81,12 @@ type PrivateSessionApiResponse = {
 
 type EndSessionApiResponse = {
   ok?: boolean;
+  code?: string;
   message?: string;
   session?: {
+    durationSeconds?: number;
     chargedMinutes?: number;
+    streamerEarnedMinutes?: number;
   };
 };
 
@@ -151,6 +155,7 @@ export default function StudioPage() {
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
   const [privateSessionResult, setPrivateSessionResult] = useState<string | null>(null);
+  const [privateSessionError, setPrivateSessionError] = useState<string | null>(null);
   const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
   const [moderationBusyUserId, setModerationBusyUserId] = useState<string | null>(null);
   const [moderationFeedback, setModerationFeedback] = useState<string | null>(null);
@@ -739,18 +744,6 @@ export default function StudioPage() {
     if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
       return;
     }
-    const timer = setInterval(() => {
-      void fetchActivePrivateSession();
-    }, 3000);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [activeRoom?.id, activeRoom?.status, ownerId]);
-
-  useEffect(() => {
-    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
-      return;
-    }
     const supabase = getSupabase();
     const channel = supabase
       .channel(`public:private-sessions:studio:${ownerId}`)
@@ -1005,6 +998,7 @@ export default function StudioPage() {
     }
     setIsPrivateSessionStarting(true);
     setPrivateSessionResult(null);
+    setPrivateSessionError(null);
     try {
       const supabase = getSupabase();
       const {
@@ -1044,6 +1038,7 @@ export default function StudioPage() {
     }
     setIsPrivateSessionEnding(true);
     setPrivateSessionResult(null);
+    setPrivateSessionError(null);
     try {
       const supabase = getSupabase();
       const {
@@ -1051,7 +1046,7 @@ export default function StudioPage() {
       } = await supabase.auth.getSession();
       const accessToken = session?.access_token;
       if (!accessToken) {
-        setPrivateSessionResult("Giriş doğrulaması yapılamadı.");
+        setPrivateSessionError("Giriş doğrulaması yapılamadı.");
         return;
       }
       const response = await fetch(`/api/private-sessions/${activePrivateSession.sessionId}/end`, {
@@ -1065,14 +1060,17 @@ export default function StudioPage() {
       });
       const payload = (await response.json().catch(() => ({}))) as EndSessionApiResponse;
       if (!response.ok || !payload.ok) {
-        setPrivateSessionResult(payload.message || "Özel oda kapatılamadı.");
+        setPrivateSessionError(payload.message || "Özel oda kapatılamadı.");
         return;
       }
-      const spent = payload.session?.chargedMinutes ?? 0;
-      setPrivateSessionResult(`Özel oda kapatıldı. Harcanan süre: ${spent} dk`);
+      const fallbackMinutes =
+        payload.session?.chargedMinutes ??
+        (typeof payload.session?.durationSeconds === "number" ? Math.max(1, Math.ceil(payload.session.durationSeconds / 60)) : 0);
+      const earnedMinutes = payload.session?.streamerEarnedMinutes ?? fallbackMinutes;
+      setPrivateSessionResult(`Özel oda kapatıldı. Yayıncı kazancı: ${earnedMinutes} dk`);
       setActivePrivateSession(null);
     } catch {
-      setPrivateSessionResult("Özel oda kapatılamadı.");
+      setPrivateSessionError("Özel oda kapatılamadı.");
     } finally {
       setIsPrivateSessionEnding(false);
     }
@@ -1619,25 +1617,26 @@ export default function StudioPage() {
             ) : (
               <div>
                 {activePrivateSession ? (
-                  <section className="mb-4 rounded-2xl border border-violet-200 bg-violet-50 p-3" data-testid="studio-private-session-panel">
-                    <p className="text-sm font-semibold text-violet-800">Özel oda aktif: Üye {activePrivateSession.viewerName}</p>
-                    <p className="mt-1 text-xs text-violet-700">Session başladı</p>
-                    <button
-                      type="button"
-                      data-testid="studio-private-session-end-button"
-                      onClick={() => {
-                        void endPrivateSession();
-                      }}
-                      disabled={isPrivateSessionEnding}
-                      className="mt-3 rounded-lg bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                    >
-                      {isPrivateSessionEnding ? "Bitiriliyor..." : "Özel Odayı Bitir"}
-                    </button>
-                  </section>
+                  <PrivateRoomSessionPanel
+                    sessionId={activePrivateSession.sessionId}
+                    viewerName={activePrivateSession.viewerName}
+                    streamerName={activePrivateSession.streamerName}
+                    startedAt={activePrivateSession.startedAt}
+                    currentUserRole="streamer"
+                    onEnd={endPrivateSession}
+                    isEnding={isPrivateSessionEnding}
+                    resultText={privateSessionResult ?? undefined}
+                    errorText={privateSessionError ?? undefined}
+                  />
                 ) : null}
-                {privateSessionResult ? (
-                  <p className="mb-3 text-xs text-violet-700" data-testid="studio-private-session-result">
+                {!activePrivateSession && privateSessionResult ? (
+                  <p className="mb-3 text-xs font-semibold text-violet-700" data-testid="private-session-result">
                     {privateSessionResult}
+                  </p>
+                ) : null}
+                {!activePrivateSession && privateSessionError ? (
+                  <p className="mb-3 text-xs font-semibold text-rose-700" data-testid="private-session-error">
+                    {privateSessionError}
                   </p>
                 ) : null}
                 <section className="mb-4 rounded-2xl border border-violet-100 bg-white p-3" data-testid="studio-private-requests-panel">

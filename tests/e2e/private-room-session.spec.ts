@@ -107,15 +107,20 @@ test("private room session starts and charges member minutes", async ({ browser,
     await expect(acceptButton).toBeVisible({ timeout: 25_000 });
     await acceptButton.click();
 
-    await expect(streamerPage.getByTestId("studio-private-session-panel")).toBeVisible({ timeout: 30_000 });
+    await expect(streamerPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
     await expect(memberPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
+    await expect(memberPage.getByTestId("private-session-timer")).toContainText(/Geçen süre:\s*00:0[0-1]/i, { timeout: 30_000 });
+    await expect(streamerPage.getByTestId("private-session-timer")).toContainText(/Geçen süre:\s*00:0[0-1]/i, { timeout: 30_000 });
+    const memberPrivateSessionPanel = memberPage.getByTestId("private-session-panel");
+    await expect(memberPrivateSessionPanel.getByText(/Yayıncı Eda/i)).toBeVisible({ timeout: 30_000 });
+    await expect(memberPrivateSessionPanel.getByText(/Üye Veli/i)).toBeVisible({ timeout: 30_000 });
     sessionStarted = true;
 
     await memberPage.waitForTimeout(2500);
     await memberPage.getByTestId("private-session-end-button").click();
 
     await expect(memberPage.getByTestId("private-session-result")).toContainText(/kapat[ıi]ld[ıi].*harcanan s[üu]re/i, { timeout: 30_000 });
-    await expect(streamerPage.getByTestId("studio-private-session-panel")).toHaveCount(0, { timeout: 30_000 });
+    await expect(streamerPage.getByTestId("private-session-panel")).toHaveCount(0, { timeout: 30_000 });
 
     await memberPage.goto("/member");
     await expect
