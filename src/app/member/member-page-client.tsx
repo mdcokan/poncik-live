@@ -50,6 +50,17 @@ type MinutePurchaseOrder = {
   decidedAt: string | null;
 };
 
+type ViewerPrivateRequest = {
+  id: string;
+  roomId: string;
+  streamerId: string;
+  streamerName: string;
+  viewerId: string;
+  viewerName: string;
+  status: string;
+  createdAt: string;
+};
+
 function packageTypeLabel(type: PackageType) {
   return type === "minute" ? "Dakika" : "Sure";
 }
@@ -64,6 +75,22 @@ function minuteOrderStatusLabel(status: MinuteOrderStatus) {
   return "Beklemede";
 }
 
+function privateRequestStatusLabel(status: string) {
+  if (status === "accepted") {
+    return "Kabul edildi";
+  }
+  if (status === "rejected") {
+    return "Reddedildi";
+  }
+  if (status === "cancelled") {
+    return "İptal edildi";
+  }
+  if (status === "expired") {
+    return "Süresi doldu";
+  }
+  return "Beklemede";
+}
+
 export default function MemberPageClient({ initialRooms, initialHasError }: MemberPageClientProps) {
   const safeInitialRooms = initialRooms.filter((room) => room.status === "live");
   const [errorMessage, setErrorMessage] = useState("");
@@ -74,6 +101,8 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
   const [purchaseInfoMessage, setPurchaseInfoMessage] = useState("");
   const [isSubmittingPackageId, setIsSubmittingPackageId] = useState<string | null>(null);
   const [myOrders, setMyOrders] = useState<MinutePurchaseOrder[]>([]);
+  const [myPrivateRequests, setMyPrivateRequests] = useState<ViewerPrivateRequest[]>([]);
+  const [isPrivateRequestsLoading, setIsPrivateRequestsLoading] = useState(false);
   const [isOrdersLoading, setIsOrdersLoading] = useState(false);
   const [packages, setPackages] = useState<PurchasePackage[]>([]);
   const [hasLoadedPackages, setHasLoadedPackages] = useState(false);
@@ -109,6 +138,10 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
     }
 
     checkUser();
+  }, []);
+
+  useEffect(() => {
+    void loadMyPrivateRequests();
   }, []);
 
   async function handleLogout() {
@@ -194,6 +227,35 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
       setMyOrders([]);
     } finally {
       setIsOrdersLoading(false);
+    }
+  }
+
+  async function loadMyPrivateRequests() {
+    setIsPrivateRequestsLoading(true);
+    try {
+      const accessToken = await fetchAccessToken();
+      if (!accessToken) {
+        setMyPrivateRequests([]);
+        return;
+      }
+
+      const response = await fetch("/api/private-requests?scope=viewer", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; requests?: ViewerPrivateRequest[] };
+      if (!response.ok || !payload.ok) {
+        setMyPrivateRequests([]);
+        return;
+      }
+
+      setMyPrivateRequests((payload.requests ?? []).slice(0, 10));
+    } catch {
+      setMyPrivateRequests([]);
+    } finally {
+      setIsPrivateRequestsLoading(false);
     }
   }
 
@@ -332,6 +394,31 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                 <p className="mt-1 text-xs text-slate-500">Dakika yukleme yakinda.</p>
               </section>
             ) : null}
+            <section className="mb-4 rounded-2xl border border-violet-100 bg-violet-50/40 p-4" data-testid="member-private-requests-panel">
+              <h2 className="text-base font-semibold text-indigo-800">Özel Oda Taleplerim</h2>
+              {isPrivateRequestsLoading ? (
+                <p className="mt-2 text-sm text-slate-600">Yukleniyor...</p>
+              ) : myPrivateRequests.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-600">Henüz özel oda talebiniz yok.</p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {myPrivateRequests.map((privateRequest) => (
+                    <article key={privateRequest.id} className="rounded-xl border border-violet-100 bg-white px-3 py-2 text-sm">
+                      <p className="font-semibold text-slate-800">{privateRequest.streamerName}</p>
+                      <p className="text-slate-600">{privateRequestStatusLabel(privateRequest.status)}</p>
+                      <p className="text-xs text-slate-500">
+                        {new Date(privateRequest.createdAt).toLocaleString("tr-TR", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
             <h2 className="text-lg font-semibold text-indigo-800">Gunun Populer Yayincilari</h2>
             <div className="mt-4 flex gap-3 overflow-x-auto">
               {featuredStreamers.length > 0 ? (
