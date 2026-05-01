@@ -75,6 +75,16 @@ type PrivateRoomRequestRealtimeRow = {
   status: string;
 };
 
+type PrivateRoomSessionRealtimeRow = {
+  id: string;
+  room_id: string;
+  status: string;
+  viewer_ready: boolean;
+  streamer_ready: boolean;
+  viewer_ready_at: string | null;
+  streamer_ready_at: string | null;
+};
+
 type PrivateSessionSummary = {
   sessionId: string;
   roomId: string;
@@ -90,6 +100,10 @@ type PrivateSessionSummary = {
   estimatedChargedMinutes?: number;
   estimatedRemainingMinutes?: number;
   isLowBalance?: boolean;
+  viewerReady?: boolean;
+  streamerReady?: boolean;
+  viewerReadyAt?: string | null;
+  streamerReadyAt?: string | null;
 };
 
 type PrivateSessionApiResponse = {
@@ -110,6 +124,19 @@ type EndSessionApiResponse = {
     viewerSpentMinutes?: number;
     streamerEarnedMinutes?: number;
     platformFeeMinutes?: number;
+  };
+};
+
+type ReadyStateApiResponse = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  readyState?: {
+    sessionId?: string;
+    viewerReady?: boolean;
+    streamerReady?: boolean;
+    viewerReadyAt?: string | null;
+    streamerReadyAt?: string | null;
   };
 };
 
@@ -873,7 +900,31 @@ export default function ViewerRoomClientPage() {
           table: "private_room_sessions",
           filter: `viewer_id=eq.${state.userId}`,
         },
-        () => {
+        (payload) => {
+          const row = (payload.new ?? payload.old ?? null) as PrivateRoomSessionRealtimeRow | null;
+          if (!row) {
+            return;
+          }
+          if (payload.eventType === "UPDATE" && activePrivateSession?.sessionId && row.id === activePrivateSession.sessionId) {
+            if (row.status !== "active") {
+              void fetchActivePrivateSession();
+              return;
+            }
+            setActivePrivateSession((previous) => {
+              if (!previous || previous.sessionId !== row.id) {
+                return previous;
+              }
+              return {
+                ...previous,
+                status: row.status,
+                viewerReady: row.viewer_ready,
+                streamerReady: row.streamer_ready,
+                viewerReadyAt: row.viewer_ready_at,
+                streamerReadyAt: row.streamer_ready_at,
+              };
+            });
+            return;
+          }
           void fetchActivePrivateSession();
         },
       )
@@ -882,7 +933,7 @@ export default function ViewerRoomClientPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [state.userId]);
+  }, [activePrivateSession?.sessionId, state.userId]);
 
   useEffect(() => {
     if (!roomId || !isLive || !state.isLoggedIn || !state.userId || isRoomBanned || isRoomKicked) {
@@ -1072,6 +1123,47 @@ export default function ViewerRoomClientPage() {
     } catch {
       // keep stale value on transient errors
     }
+  }
+
+  async function updatePrivateSessionReadyState(ready: boolean) {
+    if (!activePrivateSession?.sessionId) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+    const supabase = getSupabaseBrowserClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      window.location.href = "/login";
+      throw new Error("AUTH_REQUIRED");
+    }
+    const response = await fetch(`/api/private-sessions/${activePrivateSession.sessionId}/ready`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ ready }),
+      cache: "no-store",
+    });
+    const payload = (await response.json().catch(() => ({}))) as ReadyStateApiResponse;
+    if (!response.ok || !payload.ok || !payload.readyState) {
+      setPrivateSessionError(payload.message || "Hazır durumu güncellenemedi.");
+      throw new Error(payload.code || "READY_UPDATE_FAILED");
+    }
+    setPrivateSessionError(null);
+    setActivePrivateSession((previous) => {
+      if (!previous || previous.sessionId !== payload.readyState?.sessionId) {
+        return previous;
+      }
+      return {
+        ...previous,
+        viewerReady: Boolean(payload.readyState.viewerReady),
+        streamerReady: Boolean(payload.readyState.streamerReady),
+        viewerReadyAt: payload.readyState.viewerReadyAt ?? null,
+        streamerReadyAt: payload.readyState.streamerReadyAt ?? null,
+      };
+    });
   }
 
   async function startPrivateSession(requestId: string) {
@@ -1413,6 +1505,8 @@ export default function ViewerRoomClientPage() {
               streamerName={activePrivateSession.streamerName}
               startedAt={activePrivateSession.startedAt}
               currentUserRole="viewer"
+              viewerReady={activePrivateSession.viewerReady}
+              streamerReady={activePrivateSession.streamerReady}
               viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
               initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
               lowBalanceThresholdMinutes={2}
@@ -1420,6 +1514,7 @@ export default function ViewerRoomClientPage() {
               onAutoEnd={() => endPrivateSession("balance_depleted")}
               autoEndReason="Süre bittiği için özel oda kapatılıyor..."
               onEnd={() => endPrivateSession()}
+              onReadyChange={updatePrivateSessionReadyState}
               isEnding={isPrivateSessionEnding}
               resultText={privateSessionResult ?? undefined}
               errorText={privateSessionError ?? undefined}

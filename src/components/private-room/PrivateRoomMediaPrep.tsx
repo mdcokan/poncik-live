@@ -6,10 +6,16 @@ import { useLocalMediaPreview } from "@/hooks/use-local-media-preview";
 type PrivateRoomMediaPrepProps = {
   roleLabel: string;
   participantName: string;
-  onReadyChange?: (ready: boolean) => void;
+  initialReady?: boolean;
+  onReadyChange?: (ready: boolean) => void | Promise<void>;
 };
 
-export default function PrivateRoomMediaPrep({ roleLabel, participantName, onReadyChange }: PrivateRoomMediaPrepProps) {
+export default function PrivateRoomMediaPrep({
+  roleLabel,
+  participantName,
+  initialReady = false,
+  onReadyChange,
+}: PrivateRoomMediaPrepProps) {
   const {
     isSupported,
     isRequesting,
@@ -29,7 +35,7 @@ export default function PrivateRoomMediaPrep({ roleLabel, participantName, onRea
     selectAudioDevice,
   } = useLocalMediaPreview();
 
-  const [isReady, setIsReady] = useState(false);
+  const [isReady, setIsReady] = useState(initialReady);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -40,8 +46,8 @@ export default function PrivateRoomMediaPrep({ roleLabel, participantName, onRea
   }, [stream]);
 
   useEffect(() => {
-    onReadyChange?.(isReady);
-  }, [isReady, onReadyChange]);
+    setIsReady(initialReady);
+  }, [initialReady]);
 
   return (
     <section className="rounded-2xl border border-violet-200 bg-white p-4 shadow-sm" data-testid="private-media-prep">
@@ -140,7 +146,11 @@ export default function PrivateRoomMediaPrep({ roleLabel, participantName, onRea
         <button
           type="button"
           data-testid="private-media-ready-toggle"
-          onClick={() => setIsReady((previous) => !previous)}
+          onClick={() => {
+            const nextReady = !isReady;
+            setIsReady(nextReady);
+            void onReadyChange?.(nextReady);
+          }}
           className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-white"
         >
           {isReady ? "Hazır Değilim" : "Hazırım"}

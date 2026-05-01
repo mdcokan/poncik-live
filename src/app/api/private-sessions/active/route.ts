@@ -9,6 +9,10 @@ type SessionRow = {
   viewer_id: string;
   status: string;
   started_at: string;
+  viewer_ready: boolean;
+  streamer_ready: boolean;
+  viewer_ready_at: string | null;
+  streamer_ready_at: string | null;
 };
 
 type ProfileRow = {
@@ -79,7 +83,9 @@ export async function GET(request: Request) {
 
   let query = supabase
     .from("private_room_sessions")
-    .select("id, request_id, room_id, streamer_id, viewer_id, status, started_at")
+    .select(
+      "id, request_id, room_id, streamer_id, viewer_id, status, started_at, viewer_ready, streamer_ready, viewer_ready_at, streamer_ready_at",
+    )
     .eq("status", "active")
     .order("started_at", { ascending: false })
     .limit(1);
@@ -128,6 +134,10 @@ export async function GET(request: Request) {
       estimatedChargedMinutes,
       estimatedRemainingMinutes,
       isLowBalance,
+      viewerReady: data.viewer_ready,
+      streamerReady: data.streamer_ready,
+      viewerReadyAt: data.viewer_ready_at,
+      streamerReadyAt: data.streamer_ready_at,
     },
   });
 }

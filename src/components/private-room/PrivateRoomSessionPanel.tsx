@@ -10,6 +10,9 @@ type PrivateRoomSessionPanelProps = {
   startedAt: string;
   currentUserRole: "viewer" | "streamer";
   onEnd: () => Promise<void>;
+  viewerReady?: boolean;
+  streamerReady?: boolean;
+  onReadyChange?: (ready: boolean) => Promise<void>;
   isEnding?: boolean;
   resultText?: string;
   errorText?: string;
@@ -60,6 +63,9 @@ export default function PrivateRoomSessionPanel({
   startedAt,
   currentUserRole,
   onEnd,
+  viewerReady = false,
+  streamerReady = false,
+  onReadyChange,
   isEnding = false,
   resultText,
   errorText,
@@ -72,7 +78,9 @@ export default function PrivateRoomSessionPanel({
 }: PrivateRoomSessionPanelProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isAutoEnding, setIsAutoEnding] = useState(false);
-  const [localReady, setLocalReady] = useState(false);
+  const [localReady, setLocalReady] = useState(currentUserRole === "viewer" ? viewerReady : streamerReady);
+  const [localReadyError, setLocalReadyError] = useState<string | null>(null);
+  const [isReadyUpdating, setIsReadyUpdating] = useState(false);
   const autoEndTriggeredRef = useRef(false);
   const startedTimestamp = useMemo(() => new Date(startedAt).getTime(), [startedAt]);
   const estimatedChargedMinutes = useMemo(() => Math.max(1, Math.ceil(elapsedSeconds / 60)), [elapsedSeconds]);
@@ -86,6 +94,12 @@ export default function PrivateRoomSessionPanel({
     currentUserRole === "viewer" &&
     typeof estimatedRemainingMinutes === "number" &&
     estimatedRemainingMinutes <= lowBalanceThresholdMinutes;
+  const remoteReady = currentUserRole === "viewer" ? streamerReady : viewerReady;
+  const bothReady = viewerReady && streamerReady;
+
+  useEffect(() => {
+    setLocalReady(currentUserRole === "viewer" ? viewerReady : streamerReady);
+  }, [currentUserRole, streamerReady, viewerReady, sessionId]);
 
   useEffect(() => {
     function syncElapsed() {
@@ -147,25 +161,76 @@ export default function PrivateRoomSessionPanel({
             <PrivateRoomMediaPrep
               roleLabel="Yayıncı"
               participantName={`Yayıncı ${streamerName}`}
-              onReadyChange={(ready) => setLocalReady(ready)}
+              initialReady={localReady}
+              onReadyChange={async (ready) => {
+                setLocalReadyError(null);
+                const previousReady = localReady;
+                setLocalReady(ready);
+                if (!onReadyChange) {
+                  return;
+                }
+                setIsReadyUpdating(true);
+                try {
+                  await onReadyChange(ready);
+                } catch {
+                  setLocalReady(previousReady);
+                  setLocalReadyError("Hazır durumu güncellenemedi.");
+                } finally {
+                  setIsReadyUpdating(false);
+                }
+              }}
             />
             <PlaceholderCard title="Üye" name={`Üye ${viewerName}`} />
           </>
         ) : (
           <>
             <PlaceholderCard title="Yayıncı" name={`Yayıncı ${streamerName}`} />
-            <PrivateRoomMediaPrep roleLabel="Üye" participantName={`Üye ${viewerName}`} onReadyChange={(ready) => setLocalReady(ready)} />
+            <PrivateRoomMediaPrep
+              roleLabel="Üye"
+              participantName={`Üye ${viewerName}`}
+              initialReady={localReady}
+              onReadyChange={async (ready) => {
+                setLocalReadyError(null);
+                const previousReady = localReady;
+                setLocalReady(ready);
+                if (!onReadyChange) {
+                  return;
+                }
+                setIsReadyUpdating(true);
+                try {
+                  await onReadyChange(ready);
+                } catch {
+                  setLocalReady(previousReady);
+                  setLocalReadyError("Hazır durumu güncellenemedi.");
+                } finally {
+                  setIsReadyUpdating(false);
+                }
+              }}
+            />
           </>
         )}
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${localReady ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>
-          {localReady ? "Ben hazırım" : "Ben hazır değilim"}
+        <span
+          data-testid="private-session-local-ready"
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${localReady ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}
+        >
+          {localReady ? "Ben hazırım" : "Hazır değilim"}
         </span>
-        <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-600">
-          Karşı taraf hazırlık durumu sonraki fazda bağlanacak.
+        <span
+          data-testid="private-session-remote-ready"
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${remoteReady ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}
+        >
+          {remoteReady ? "Karşı taraf hazır" : "Karşı taraf henüz hazır değil"}
         </span>
       </div>
+      {bothReady ? (
+        <p className="mt-2 text-xs font-semibold text-emerald-700" data-testid="private-session-both-ready">
+          İki taraf da hazır. Kamera bağlantısı sonraki fazda başlatılacak.
+        </p>
+      ) : null}
+      {isReadyUpdating ? <p className="mt-2 text-xs text-zinc-600">Hazır durumu güncelleniyor...</p> : null}
+      {localReadyError ? <p className="mt-2 text-xs font-semibold text-rose-700">{localReadyError}</p> : null}
 
       <p className="mt-4 text-sm font-semibold text-zinc-800" data-testid="private-session-timer">
         Geçen süre: {formatElapsed(elapsedSeconds)}
