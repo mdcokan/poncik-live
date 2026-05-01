@@ -64,6 +64,18 @@ type ProfileNameRow = {
   display_name: string | null;
 };
 
+type PrivateSessionRow = {
+  id: string;
+  room_id: string;
+  streamer_id: string;
+  viewer_id: string;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  charged_minutes: number;
+  streamer_earned_minutes: number;
+};
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -157,6 +169,8 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
       { data: sentGiftRows, error: sentGiftsError },
       { data: receivedGiftRows, error: receivedGiftsError },
       { data: actionLogRows, error: actionLogsError },
+      { data: privateSessionViewerRows, error: privateSessionViewerError },
+      { data: privateSessionStreamerRows, error: privateSessionStreamerError },
     ] = await Promise.all([
       supabase
         .from("minute_purchase_orders")
@@ -188,9 +202,29 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
         .eq("target_user_id", userId)
         .order("created_at", { ascending: false })
         .limit(DETAIL_LIMIT),
+      supabase
+        .from("private_room_sessions")
+        .select("id, room_id, streamer_id, viewer_id, status, started_at, ended_at, charged_minutes, streamer_earned_minutes")
+        .eq("viewer_id", userId)
+        .order("started_at", { ascending: false })
+        .limit(DETAIL_LIMIT),
+      supabase
+        .from("private_room_sessions")
+        .select("id, room_id, streamer_id, viewer_id, status, started_at, ended_at, charged_minutes, streamer_earned_minutes")
+        .eq("streamer_id", userId)
+        .order("started_at", { ascending: false })
+        .limit(DETAIL_LIMIT),
     ]);
 
-    if (minuteOrdersError || walletAdjustmentsError || sentGiftsError || receivedGiftsError || actionLogsError) {
+    if (
+      minuteOrdersError ||
+      walletAdjustmentsError ||
+      sentGiftsError ||
+      receivedGiftsError ||
+      actionLogsError ||
+      privateSessionViewerError ||
+      privateSessionStreamerError
+    ) {
       return noStoreJson({ ok: false, message: "Kullanıcı detayı yüklenemedi." }, { status: 500 });
     }
 
@@ -198,6 +232,12 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
     const sentGifts = (sentGiftRows as GiftTransactionRow[] | null) ?? [];
     const receivedGifts = (receivedGiftRows as GiftTransactionRow[] | null) ?? [];
     const actionLogs = (actionLogRows as ActionLogRow[] | null) ?? [];
+    const privateSessions = [
+      ...((privateSessionViewerRows as PrivateSessionRow[] | null) ?? []),
+      ...((privateSessionStreamerRows as PrivateSessionRow[] | null) ?? []),
+    ]
+      .sort((left, right) => new Date(right.started_at).getTime() - new Date(left.started_at).getTime())
+      .slice(0, DETAIL_LIMIT);
 
     const adminIds = Array.from(new Set([...walletAdjustments.map((row) => row.admin_id), ...actionLogs.map((row) => row.admin_id)]));
     const giftIds = Array.from(new Set([...sentGifts.map((row) => row.gift_id), ...receivedGifts.map((row) => row.gift_id)]));
@@ -277,6 +317,17 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
         adminName: adminNameById.get(row.admin_id) ?? "Admin",
         createdAt: row.created_at,
         metadata: row.metadata ?? {},
+      })),
+      privateSessions: privateSessions.map((row) => ({
+        id: row.id,
+        roomId: row.room_id,
+        streamerId: row.streamer_id,
+        viewerId: row.viewer_id,
+        status: row.status,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+        chargedMinutes: row.charged_minutes,
+        streamerEarnedMinutes: row.streamer_earned_minutes,
       })),
     });
   } catch {

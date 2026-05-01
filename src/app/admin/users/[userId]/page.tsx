@@ -65,6 +65,17 @@ type UserDetail = {
   sentGifts: GiftItem[];
   receivedGifts: GiftItem[];
   actionLogs: ActionLog[];
+  privateSessions: Array<{
+    id: string;
+    roomId: string;
+    streamerId: string;
+    viewerId: string;
+    status: string;
+    startedAt: string;
+    endedAt: string | null;
+    chargedMinutes: number;
+    streamerEarnedMinutes: number;
+  }>;
 };
 
 type DetailApiResponse = {
@@ -156,6 +167,7 @@ export default function AdminUserDetailPage() {
         sentGifts: payload.sentGifts ?? [],
         receivedGifts: payload.receivedGifts ?? [],
         actionLogs: payload.actionLogs ?? [],
+        privateSessions: payload.privateSessions ?? [],
       };
       setDetail(nextDetail);
       if (nextDetail.profile.role !== "owner") {
@@ -524,6 +536,23 @@ export default function AdminUserDetailPage() {
                 </div>
               </section>
             </div>
+
+            <section className="mt-4 rounded-2xl border border-cyan-100 bg-white p-4">
+              <h2 className="text-sm font-semibold text-indigo-800">Özel Oda Session Geçmişi</h2>
+              <div className="mt-3 space-y-2">
+                {detail.privateSessions.map((session) => (
+                  <article key={session.id} className="rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2 text-sm">
+                    <p className="font-semibold text-slate-800">
+                      {session.status} • {session.chargedMinutes} dk • yayıncı kazancı {session.streamerEarnedMinutes} dk
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Başlangıç: {formatDateTime(session.startedAt)} • Bitiş: {formatDateTime(session.endedAt)}
+                    </p>
+                  </article>
+                ))}
+                {detail.privateSessions.length === 0 ? <p className="text-sm text-slate-500">Son 20 session içinde kayıt yok.</p> : null}
+              </div>
+            </section>
 
             <section className="mt-4 rounded-2xl border border-cyan-100 bg-white p-4">
               <h2 className="text-sm font-semibold text-indigo-800">Admin İşlem Geçmişi</h2>

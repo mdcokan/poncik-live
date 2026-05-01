@@ -69,8 +69,37 @@ type PrivateRequestApiResponse = {
 
 type PrivateRoomRequestRealtimeRow = {
   id: string;
+  room_id: string;
   viewer_id: string;
   status: string;
+};
+
+type PrivateSessionSummary = {
+  sessionId: string;
+  roomId: string;
+  requestId: string;
+  streamerId: string;
+  streamerName: string;
+  viewerId: string;
+  viewerName: string;
+  status: string;
+  startedAt: string;
+};
+
+type PrivateSessionApiResponse = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  session?: PrivateSessionSummary | null;
+};
+
+type EndSessionApiResponse = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  session?: {
+    chargedMinutes?: number;
+  };
 };
 
 type LiveRoomsBroadcastPayload = {
@@ -196,6 +225,10 @@ export default function ViewerRoomClientPage() {
   const [privateRequestFeedback, setPrivateRequestFeedback] = useState<string | null>(null);
   const [isPrivateRequestPending, setIsPrivateRequestPending] = useState(false);
   const [showInsufficientMinutesModal, setShowInsufficientMinutesModal] = useState(false);
+  const [activePrivateSession, setActivePrivateSession] = useState<PrivateSessionSummary | null>(null);
+  const [privateSessionResult, setPrivateSessionResult] = useState<string | null>(null);
+  const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
+  const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
   const messageIdsRef = useRef(new Set<string>());
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -207,6 +240,7 @@ export default function ViewerRoomClientPage() {
   const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending || isRoomMuted || isRoomBanned || isRoomKicked;
   const isGiftSendDisabled = !state.isLoggedIn || !isLive || isViewerBanned || isRoomBanned || isRoomKicked || Boolean(pendingGiftId);
   const isPrivateRequestDisabled = !isLive || isViewerBanned || isRoomBanned || isRoomKicked || isPrivateRequestPending;
+  const hasActivePrivateSession = Boolean(activePrivateSession?.sessionId);
 
   function getGiftMinuteCost(gift: GiftCatalogItem) {
     return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
@@ -790,7 +824,8 @@ export default function ViewerRoomClientPage() {
           }
 
           if (row.status === "accepted") {
-            setPrivateRequestFeedback("Özel oda talebiniz kabul edildi. Özel oda bağlantısı bir sonraki fazda açılacak.");
+            setPrivateRequestFeedback("Özel oda talebiniz kabul edildi.");
+            void startPrivateSession(row.id);
           } else if (row.status === "rejected") {
             setPrivateRequestFeedback("Özel oda talebiniz reddedildi.");
           }
@@ -801,7 +836,53 @@ export default function ViewerRoomClientPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
+  }, [hasActivePrivateSession, isPrivateSessionStarting, state.userId]);
+
+  useEffect(() => {
+    if (!state.userId || !state.isLoggedIn) {
+      setActivePrivateSession(null);
+      return;
+    }
+    void fetchActivePrivateSession();
+  }, [state.isLoggedIn, state.userId]);
+
+  useEffect(() => {
+    if (!state.userId) {
+      return;
+    }
+    const supabase = getSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`public:private-sessions:viewer:${state.userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "private_room_sessions",
+          filter: `viewer_id=eq.${state.userId}`,
+        },
+        () => {
+          void fetchActivePrivateSession();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   }, [state.userId]);
+
+  useEffect(() => {
+    if (!state.userId || !state.isLoggedIn) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void fetchActivePrivateSession();
+    }, 3000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [state.isLoggedIn, state.userId]);
 
   useEffect(() => {
     if (!roomId || !isLive || !state.isLoggedIn || !state.userId || isRoomBanned || isRoomKicked) {
@@ -960,6 +1041,120 @@ export default function ViewerRoomClientPage() {
       setPrivateRequestFeedback("Özel oda talebi gönderilemedi.");
     } finally {
       setIsPrivateRequestPending(false);
+    }
+  }
+
+  async function fetchActivePrivateSession() {
+    if (!state.isLoggedIn) {
+      setActivePrivateSession(null);
+      return;
+    }
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setActivePrivateSession(null);
+        return;
+      }
+      const response = await fetch("/api/private-sessions/active", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as PrivateSessionApiResponse;
+      if (!response.ok || !payload.ok) {
+        return;
+      }
+      setActivePrivateSession(payload.session ?? null);
+    } catch {
+      // keep stale value on transient errors
+    }
+  }
+
+  async function startPrivateSession(requestId: string) {
+    if (!requestId || isPrivateSessionStarting || hasActivePrivateSession) {
+      return;
+    }
+    setIsPrivateSessionStarting(true);
+    setPrivateSessionResult(null);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        window.location.href = "/login";
+        return;
+      }
+      const response = await fetch("/api/private-sessions/start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ requestId }),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as PrivateSessionApiResponse;
+      if (!response.ok || !payload.ok) {
+        if (payload.code === "INSUFFICIENT_MINUTES") {
+          setPrivateRequestFeedback("Süreniz yeterli değil.");
+          return;
+        }
+        if (payload.code === "AUTH_REQUIRED") {
+          window.location.href = "/login";
+          return;
+        }
+        setPrivateRequestFeedback(payload.message || "Özel oda başlatılamadı.");
+        return;
+      }
+      setActivePrivateSession(payload.session ?? null);
+      setPrivateRequestFeedback("Özel oda aktif.");
+    } catch {
+      setPrivateRequestFeedback("Özel oda başlatılamadı.");
+    } finally {
+      setIsPrivateSessionStarting(false);
+    }
+  }
+
+  async function endPrivateSession() {
+    if (!activePrivateSession?.sessionId || isPrivateSessionEnding) {
+      return;
+    }
+    setIsPrivateSessionEnding(true);
+    setPrivateSessionResult(null);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        window.location.href = "/login";
+        return;
+      }
+      const response = await fetch(`/api/private-sessions/${activePrivateSession.sessionId}/end`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({}),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as EndSessionApiResponse;
+      if (!response.ok || !payload.ok) {
+        setPrivateSessionResult(payload.message || "Özel oda kapatılamadı.");
+        return;
+      }
+      const spent = payload.session?.chargedMinutes ?? 0;
+      setPrivateSessionResult(`Özel oda kapatıldı. Harcanan süre: ${spent} dk`);
+      setActivePrivateSession(null);
+    } catch {
+      setPrivateSessionResult("Özel oda kapatılamadı.");
+    } finally {
+      setIsPrivateSessionEnding(false);
     }
   }
 
@@ -1200,6 +1395,30 @@ export default function ViewerRoomClientPage() {
                 {privateRequestFeedback}
               </p>
             )
+          ) : null}
+          {activePrivateSession ? (
+            <section className="mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-3" data-testid="private-session-panel">
+              <p className="text-sm font-semibold text-violet-800">Özel oda aktif</p>
+              <p className="mt-1 text-xs text-violet-700">
+                Şu an özel oda oturumundasınız. Kamera altyapısı bir sonraki fazda bağlanacak.
+              </p>
+              <button
+                type="button"
+                data-testid="private-session-end-button"
+                onClick={() => {
+                  void endPrivateSession();
+                }}
+                disabled={isPrivateSessionEnding}
+                className="mt-3 rounded-xl bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+              >
+                {isPrivateSessionEnding ? "Bitiriliyor..." : "Özel Odayı Bitir"}
+              </button>
+            </section>
+          ) : null}
+          {privateSessionResult ? (
+            <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-session-result">
+              {privateSessionResult}
+            </p>
           ) : null}
         </div>
 

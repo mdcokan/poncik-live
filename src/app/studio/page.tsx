@@ -59,6 +59,33 @@ type PrivateRequestsApiResponse = {
   message?: string;
 };
 
+type PrivateSessionSummary = {
+  sessionId: string;
+  roomId: string;
+  requestId: string;
+  streamerId: string;
+  streamerName: string;
+  viewerId: string;
+  viewerName: string;
+  status: string;
+  startedAt: string;
+};
+
+type PrivateSessionApiResponse = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  session?: PrivateSessionSummary | null;
+};
+
+type EndSessionApiResponse = {
+  ok?: boolean;
+  message?: string;
+  session?: {
+    chargedMinutes?: number;
+  };
+};
+
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 function getPresenceRoleLabel(role: string) {
@@ -120,6 +147,10 @@ export default function StudioPage() {
   const [isPrivateRequestsLoading, setIsPrivateRequestsLoading] = useState(false);
   const [privateRequestsFeedback, setPrivateRequestsFeedback] = useState<string | null>(null);
   const [privateRequestDecidingId, setPrivateRequestDecidingId] = useState<string | null>(null);
+  const [activePrivateSession, setActivePrivateSession] = useState<PrivateSessionSummary | null>(null);
+  const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
+  const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
+  const [privateSessionResult, setPrivateSessionResult] = useState<string | null>(null);
   const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
   const [moderationBusyUserId, setModerationBusyUserId] = useState<string | null>(null);
   const [moderationFeedback, setModerationFeedback] = useState<string | null>(null);
@@ -605,7 +636,15 @@ export default function StudioPage() {
       return;
     }
     void fetchPrivateRequests();
-  }, [activeRoom?.id, activeRoom?.status, fetchPrivateRequests, ownerId]);
+  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+
+  useEffect(() => {
+    if (!activeRoom?.id || !ownerId || activeRoom.status !== "live") {
+      setActivePrivateSession(null);
+      return;
+    }
+    void fetchActivePrivateSession();
+  }, [activeRoom?.id, activeRoom?.status, ownerId]);
 
   useEffect(() => {
     if (!activeRoom?.id) {
@@ -687,6 +726,44 @@ export default function StudioPage() {
         },
         () => {
           void fetchPrivateRequests({ silent: true });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+
+  useEffect(() => {
+    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
+      return;
+    }
+    const timer = setInterval(() => {
+      void fetchActivePrivateSession();
+    }, 3000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+
+  useEffect(() => {
+    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
+      return;
+    }
+    const supabase = getSupabase();
+    const channel = supabase
+      .channel(`public:private-sessions:studio:${ownerId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "private_room_sessions",
+          filter: `streamer_id=eq.${ownerId}`,
+        },
+        () => {
+          void fetchActivePrivateSession();
         },
       )
       .subscribe();
@@ -892,6 +969,115 @@ export default function StudioPage() {
     }
   }
 
+  async function fetchActivePrivateSession() {
+    if (!activeRoom?.id || !ownerId || activeRoom.status !== "live") {
+      setActivePrivateSession(null);
+      return;
+    }
+    try {
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setActivePrivateSession(null);
+        return;
+      }
+      const response = await fetch("/api/private-sessions/active", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as PrivateSessionApiResponse;
+      if (!response.ok || !payload.ok) {
+        return;
+      }
+      setActivePrivateSession(payload.session && payload.session.roomId === activeRoom.id ? payload.session : null);
+    } catch {
+      // keep stale value on transient failures
+    }
+  }
+
+  async function startPrivateSession(requestId: string) {
+    if (!requestId || isPrivateSessionStarting) {
+      return;
+    }
+    setIsPrivateSessionStarting(true);
+    setPrivateSessionResult(null);
+    try {
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setPrivateRequestsFeedback("Giriş doğrulaması yapılamadı.");
+        return;
+      }
+      const response = await fetch("/api/private-sessions/start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ requestId }),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as PrivateSessionApiResponse;
+      if (!response.ok || !payload.ok) {
+        setPrivateRequestsFeedback(payload.message || "Özel oda başlatılamadı.");
+        return;
+      }
+      setActivePrivateSession(payload.session ?? null);
+      setPrivateSessionResult("Session başladı");
+    } catch {
+      setPrivateRequestsFeedback("Özel oda başlatılamadı.");
+    } finally {
+      setIsPrivateSessionStarting(false);
+    }
+  }
+
+  async function endPrivateSession() {
+    if (!activePrivateSession?.sessionId || isPrivateSessionEnding) {
+      return;
+    }
+    setIsPrivateSessionEnding(true);
+    setPrivateSessionResult(null);
+    try {
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setPrivateSessionResult("Giriş doğrulaması yapılamadı.");
+        return;
+      }
+      const response = await fetch(`/api/private-sessions/${activePrivateSession.sessionId}/end`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({}),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as EndSessionApiResponse;
+      if (!response.ok || !payload.ok) {
+        setPrivateSessionResult(payload.message || "Özel oda kapatılamadı.");
+        return;
+      }
+      const spent = payload.session?.chargedMinutes ?? 0;
+      setPrivateSessionResult(`Özel oda kapatıldı. Harcanan süre: ${spent} dk`);
+      setActivePrivateSession(null);
+    } catch {
+      setPrivateSessionResult("Özel oda kapatılamadı.");
+    } finally {
+      setIsPrivateSessionEnding(false);
+    }
+  }
+
   const handleDecidePrivateRequest = useCallback(async (requestId: string, decision: "accepted" | "rejected") => {
     setPrivateRequestsFeedback(null);
     setPrivateRequestDecidingId(requestId);
@@ -922,6 +1108,9 @@ export default function StudioPage() {
       }
 
       setPrivateRequests((previous) => previous.filter((item) => item.id !== requestId));
+      if (decision === "accepted") {
+        await startPrivateSession(requestId);
+      }
     } catch {
       setPrivateRequestsFeedback("Talep güncellenemedi.");
     } finally {
@@ -1429,6 +1618,28 @@ export default function StudioPage() {
               )
             ) : (
               <div>
+                {activePrivateSession ? (
+                  <section className="mb-4 rounded-2xl border border-violet-200 bg-violet-50 p-3" data-testid="studio-private-session-panel">
+                    <p className="text-sm font-semibold text-violet-800">Özel oda aktif: Üye {activePrivateSession.viewerName}</p>
+                    <p className="mt-1 text-xs text-violet-700">Session başladı</p>
+                    <button
+                      type="button"
+                      data-testid="studio-private-session-end-button"
+                      onClick={() => {
+                        void endPrivateSession();
+                      }}
+                      disabled={isPrivateSessionEnding}
+                      className="mt-3 rounded-lg bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                    >
+                      {isPrivateSessionEnding ? "Bitiriliyor..." : "Özel Odayı Bitir"}
+                    </button>
+                  </section>
+                ) : null}
+                {privateSessionResult ? (
+                  <p className="mb-3 text-xs text-violet-700" data-testid="studio-private-session-result">
+                    {privateSessionResult}
+                  </p>
+                ) : null}
                 <section className="mb-4 rounded-2xl border border-violet-100 bg-white p-3" data-testid="studio-private-requests-panel">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-600">Özel Oda Talepleri</p>

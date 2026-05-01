@@ -167,6 +167,28 @@ export async function POST(request: Request) {
       }
     }
 
+    const { data: activePrivateSessions, error: activePrivateSessionsError } = await adminClient
+      .from("private_room_sessions")
+      .select("id")
+      .eq("status", "active")
+      .or(`viewer_id.eq.${fixtureUsers[VIEWER_EMAIL].id},streamer_id.eq.${fixtureUsers[STREAMER_EMAIL].id}`);
+    if (activePrivateSessionsError) {
+      throw new Error(`Failed to list active private sessions: ${activePrivateSessionsError.message}`);
+    }
+    for (const sessionRow of activePrivateSessions ?? []) {
+      const { error: endSessionError } = await adminClient.rpc("end_private_room_session", {
+        p_session_id: sessionRow.id,
+        p_end_reason: "fixture_normalize",
+      });
+      if (endSessionError) {
+        const msg = endSessionError.message ?? "";
+        if (msg.includes("SESSION_NOT_FOUND") || msg.includes("SESSION_NOT_ACTIVE")) {
+          continue;
+        }
+        throw new Error(`Failed to end active private session: ${endSessionError.message}`);
+      }
+    }
+
     const { data: wallet } = await adminClient.from("wallets").select("balance").eq("user_id", fixtureUsers[VIEWER_EMAIL].id).maybeSingle();
     const currentBalance = typeof wallet?.balance === "number" ? wallet.balance : 0;
     if (currentBalance < 500) {

@@ -27,6 +27,15 @@ type GiftSummaryRow = {
   created_at: string;
 };
 
+type StreamerEarningRow = {
+  id: string;
+  source_id: string;
+  gross_minutes: number;
+  platform_fee_minutes: number;
+  net_minutes: number;
+  created_at: string;
+};
+
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -47,6 +56,9 @@ export default function StreamerPage() {
   const [recentGifts, setRecentGifts] = useState<
     Array<{ id: string; senderName: string; giftName: string; amount: number; createdAt: string }>
   >([]);
+  const [todayPrivateRoomTotal, setTodayPrivateRoomTotal] = useState(0);
+  const [overallPrivateRoomTotal, setOverallPrivateRoomTotal] = useState(0);
+  const [recentPrivateRoomEarnings, setRecentPrivateRoomEarnings] = useState<StreamerEarningRow[]>([]);
 
   useEffect(() => {
     async function checkRole() {
@@ -146,6 +158,45 @@ export default function StreamerPage() {
     void loadGiftSummary();
   }, [streamerId]);
 
+  useEffect(() => {
+    async function loadPrivateRoomEarnings() {
+      if (!streamerId) {
+        return;
+      }
+      try {
+        const supabase = getSupabaseClient();
+        const { data } = await supabase
+          .from("streamer_earnings")
+          .select("id, source_id, gross_minutes, platform_fee_minutes, net_minutes, created_at")
+          .eq("streamer_id", streamerId)
+          .eq("source_type", "private_room")
+          .order("created_at", { ascending: false })
+          .limit(100);
+
+        const rows = (data as StreamerEarningRow[] | null) ?? [];
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayStartMs = todayStart.getTime();
+        let todayTotal = 0;
+        let total = 0;
+        for (const row of rows) {
+          total += row.net_minutes;
+          if (new Date(row.created_at).getTime() >= todayStartMs) {
+            todayTotal += row.net_minutes;
+          }
+        }
+        setTodayPrivateRoomTotal(todayTotal);
+        setOverallPrivateRoomTotal(total);
+        setRecentPrivateRoomEarnings(rows.slice(0, 10));
+      } catch {
+        setTodayPrivateRoomTotal(0);
+        setOverallPrivateRoomTotal(0);
+        setRecentPrivateRoomEarnings([]);
+      }
+    }
+    void loadPrivateRoomEarnings();
+  }, [streamerId]);
+
   async function handleLogout() {
     try {
       const supabase = getSupabaseClient();
@@ -221,6 +272,17 @@ export default function StreamerPage() {
             </article>
           </div>
 
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <article className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="text-sm font-semibold text-slate-500">Bugünkü özel oda kazancı</h2>
+              <p className="mt-2 text-3xl font-bold text-indigo-800">{todayPrivateRoomTotal} dk</p>
+            </article>
+            <article className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="text-sm font-semibold text-slate-500">Toplam özel oda kazancı</h2>
+              <p className="mt-2 text-3xl font-bold text-indigo-800">{overallPrivateRoomTotal} dk</p>
+            </article>
+          </div>
+
           <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
             <h2 className="text-lg font-semibold text-indigo-800">Son gelen hediyeler</h2>
             <div className="mt-4 space-y-2">
@@ -237,6 +299,25 @@ export default function StreamerPage() {
               {recentGifts.length === 0 ? (
                 <p className="rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm text-slate-500">
                   Henuz hediye kaydi yok.
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6">
+            <h2 className="text-lg font-semibold text-indigo-800">Son özel oda kazançları</h2>
+            <div className="mt-4 space-y-2">
+              {recentPrivateRoomEarnings.map((earning) => (
+                <article key={earning.id} className="rounded-2xl border border-violet-100 bg-violet-50 p-3">
+                  <p className="text-sm font-semibold text-slate-800">Net: {earning.net_minutes} dk</p>
+                  <p className="text-xs text-slate-500">
+                    Brüt {earning.gross_minutes} dk • Kesinti {earning.platform_fee_minutes} dk •{" "}
+                    {new Date(earning.created_at).toLocaleString("tr-TR")}
+                  </p>
+                </article>
+              ))}
+              {recentPrivateRoomEarnings.length === 0 ? (
+                <p className="rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm text-slate-500">
+                  Henüz özel oda kazancı yok.
                 </p>
               ) : null}
             </div>

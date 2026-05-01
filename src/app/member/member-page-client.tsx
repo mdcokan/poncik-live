@@ -61,6 +61,18 @@ type ViewerPrivateRequest = {
   createdAt: string;
 };
 
+type PrivateSessionSummary = {
+  sessionId: string;
+  roomId: string;
+  requestId: string;
+  streamerId: string;
+  streamerName: string;
+  viewerId: string;
+  viewerName: string;
+  status: string;
+  startedAt: string;
+};
+
 function packageTypeLabel(type: PackageType) {
   return type === "minute" ? "Dakika" : "Sure";
 }
@@ -103,6 +115,7 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
   const [myOrders, setMyOrders] = useState<MinutePurchaseOrder[]>([]);
   const [myPrivateRequests, setMyPrivateRequests] = useState<ViewerPrivateRequest[]>([]);
   const [isPrivateRequestsLoading, setIsPrivateRequestsLoading] = useState(false);
+  const [activePrivateSession, setActivePrivateSession] = useState<PrivateSessionSummary | null>(null);
   const [isOrdersLoading, setIsOrdersLoading] = useState(false);
   const [packages, setPackages] = useState<PurchasePackage[]>([]);
   const [hasLoadedPackages, setHasLoadedPackages] = useState(false);
@@ -142,6 +155,7 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
 
   useEffect(() => {
     void loadMyPrivateRequests();
+    void loadActivePrivateSession();
   }, []);
 
   async function handleLogout() {
@@ -256,6 +270,28 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
       setMyPrivateRequests([]);
     } finally {
       setIsPrivateRequestsLoading(false);
+    }
+  }
+
+  async function loadActivePrivateSession() {
+    try {
+      const accessToken = await fetchAccessToken();
+      if (!accessToken) {
+        setActivePrivateSession(null);
+        return;
+      }
+      const response = await fetch("/api/private-sessions/active", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; session?: PrivateSessionSummary | null };
+      if (!response.ok || !payload.ok) {
+        setActivePrivateSession(null);
+        return;
+      }
+      setActivePrivateSession(payload.session ?? null);
+    } catch {
+      setActivePrivateSession(null);
     }
   }
 
@@ -417,6 +453,18 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
                     </article>
                   ))}
                 </div>
+              )}
+            </section>
+            <section className="mb-4 rounded-2xl border border-violet-100 bg-white p-4" data-testid="member-active-private-session-panel">
+              <h2 className="text-base font-semibold text-indigo-800">Özel Oda Geçmişim</h2>
+              {activePrivateSession ? (
+                <article className="mt-3 rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2 text-sm">
+                  <p className="font-semibold text-slate-800">{activePrivateSession.streamerName}</p>
+                  <p className="text-slate-600">Aktif özel oda oturumu</p>
+                  <p className="text-xs text-slate-500">{new Date(activePrivateSession.startedAt).toLocaleString("tr-TR")}</p>
+                </article>
+              ) : (
+                <p className="mt-2 text-sm text-slate-600">Aktif özel oda oturumunuz yok.</p>
               )}
             </section>
             <h2 className="text-lg font-semibold text-indigo-800">Gunun Populer Yayincilari</h2>
