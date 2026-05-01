@@ -143,6 +143,30 @@ export async function POST(request: Request) {
       throw new Error(`Failed to set viewer display_name: ${viewerDisplayNameError.message}`);
     }
 
+    const { data: pendingPrivateRows, error: pendingPrivateError } = await adminClient
+      .from("private_room_requests")
+      .select("id")
+      .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id)
+      .eq("viewer_id", fixtureUsers[VIEWER_EMAIL].id)
+      .eq("status", "pending");
+    if (pendingPrivateError) {
+      throw new Error(`Failed to list fixture private room requests: ${pendingPrivateError.message}`);
+    }
+    for (const row of pendingPrivateRows ?? []) {
+      const { error: cancelError } = await adminClient.rpc("decide_private_room_request", {
+        p_request_id: row.id,
+        p_decision: "cancelled",
+        p_streamer_note: null,
+      });
+      if (cancelError) {
+        const msg = cancelError.message ?? "";
+        if (msg.includes("REQUEST_NOT_PENDING") || msg.includes("REQUEST_NOT_FOUND")) {
+          continue;
+        }
+        throw new Error(`Failed to cancel fixture private room request: ${cancelError.message}`);
+      }
+    }
+
     const { data: wallet } = await adminClient.from("wallets").select("balance").eq("user_id", fixtureUsers[VIEWER_EMAIL].id).maybeSingle();
     const currentBalance = typeof wallet?.balance === "number" ? wallet.balance : 0;
     if (currentBalance < 500) {

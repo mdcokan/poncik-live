@@ -37,6 +37,28 @@ type GiftCatalogItem = {
 
 type ModerationAction = "mute" | "unmute" | "kick" | "ban" | "unban";
 
+type PrivateRequestStatus = "pending" | "accepted" | "rejected" | "cancelled" | "expired";
+
+type StudioPrivateRequestItem = {
+  id: string;
+  roomId: string;
+  streamerId: string;
+  streamerName: string;
+  viewerId: string;
+  viewerName: string;
+  status: PrivateRequestStatus;
+  viewerNote: string | null;
+  streamerNote: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+};
+
+type PrivateRequestsApiResponse = {
+  ok?: boolean;
+  requests?: StudioPrivateRequestItem[];
+  message?: string;
+};
+
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 function getPresenceRoleLabel(role: string) {
@@ -94,6 +116,10 @@ export default function StudioPage() {
   const [hasGiftCatalogLoaded, setHasGiftCatalogLoaded] = useState(false);
   const [giftEvents, setGiftEvents] = useState<RoomGiftEvent[]>([]);
   const [giftOverlayText, setGiftOverlayText] = useState<string | null>(null);
+  const [privateRequests, setPrivateRequests] = useState<StudioPrivateRequestItem[]>([]);
+  const [isPrivateRequestsLoading, setIsPrivateRequestsLoading] = useState(false);
+  const [privateRequestsFeedback, setPrivateRequestsFeedback] = useState<string | null>(null);
+  const [privateRequestDecidingId, setPrivateRequestDecidingId] = useState<string | null>(null);
   const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
   const [moderationBusyUserId, setModerationBusyUserId] = useState<string | null>(null);
   const [moderationFeedback, setModerationFeedback] = useState<string | null>(null);
@@ -263,7 +289,7 @@ export default function StudioPage() {
     [refreshMessages],
   );
 
-  const refreshPresence = useCallback(async () => {
+  const refreshPresence = useCallback(async (options?: { skipMuteSnapshot?: boolean }) => {
     if (!activeRoom?.id || activeRoom.status !== "live") {
       setPresenceUsers([]);
       return;
@@ -272,15 +298,19 @@ export default function StudioPage() {
     const supabase = getSupabase();
     const [fetchedPresence, roomMutes] = await Promise.all([
       fetchRoomPresenceFromApi(activeRoom.id, supabase, 100),
-      supabase.from("room_mutes").select("user_id").eq("room_id", activeRoom.id),
+      options?.skipMuteSnapshot
+        ? Promise.resolve({ data: null as { user_id: string }[] | null })
+        : supabase.from("room_mutes").select("user_id").eq("room_id", activeRoom.id),
     ]);
     setPresenceUsers(fetchedPresence);
-    const nextMutedUserIds = new Set(
-      (roomMutes.data ?? [])
-        .map((row) => (row as { user_id?: string }).user_id)
-        .filter((userId): userId is string => Boolean(userId)),
-    );
-    setMutedUserIds(nextMutedUserIds);
+    if (!options?.skipMuteSnapshot) {
+      const nextMutedUserIds = new Set(
+        (roomMutes.data ?? [])
+          .map((row) => (row as { user_id?: string }).user_id)
+          .filter((userId): userId is string => Boolean(userId)),
+      );
+      setMutedUserIds(nextMutedUserIds);
+    }
   }, [activeRoom?.id, activeRoom?.status]);
 
   const scheduleRefreshPresence = useCallback(
@@ -570,6 +600,14 @@ export default function StudioPage() {
   }, [activeRoom?.id, activeRoom?.status, refreshPresence]);
 
   useEffect(() => {
+    if (!activeRoom?.id || !ownerId || activeRoom.status !== "live") {
+      setPrivateRequests([]);
+      return;
+    }
+    void fetchPrivateRequests();
+  }, [activeRoom?.id, activeRoom?.status, fetchPrivateRequests, ownerId]);
+
+  useEffect(() => {
     if (!activeRoom?.id) {
       return;
     }
@@ -630,6 +668,33 @@ export default function StudioPage() {
       void supabase.removeChannel(channel);
     };
   }, [activeRoom?.id, scheduleRefreshPresence]);
+
+  useEffect(() => {
+    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
+      return;
+    }
+
+    const supabase = getSupabase();
+    const channel = supabase
+      .channel(`public:private-room-requests:studio:${ownerId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "private_room_requests",
+          filter: `streamer_id=eq.${ownerId}`,
+        },
+        () => {
+          void fetchPrivateRequests({ silent: true });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [activeRoom?.id, activeRoom?.status, ownerId]);
 
   useEffect(() => {
     if (!activeRoom?.id || activeRoom.status !== "live" || !ownerId || role !== "streamer") {
@@ -757,13 +822,112 @@ export default function StudioPage() {
         setModerationFeedback("Kullanıcının oda banı kaldırıldı.");
       }
 
-      void refreshPresence();
+      if (action === "mute" || action === "unmute") {
+        void refreshPresence({ skipMuteSnapshot: true });
+      } else {
+        void refreshPresence();
+      }
     } catch {
       setModerationFeedback("Moderasyon işlemi tamamlanamadı.");
     } finally {
       setModerationBusyUserId(null);
     }
   }
+
+  async function fetchPrivateRequests(options?: { silent?: boolean }) {
+    if (!activeRoom?.id || !ownerId || activeRoom.status !== "live") {
+      setPrivateRequests([]);
+      return;
+    }
+
+    const showLoading = !options?.silent;
+    if (showLoading) {
+      setIsPrivateRequestsLoading(true);
+    }
+    try {
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setPrivateRequests([]);
+        return;
+      }
+
+      const response = await fetch("/api/private-requests?scope=streamer&status=pending", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as PrivateRequestsApiResponse;
+      if (!response.ok || !payload.ok) {
+        setPrivateRequestsFeedback(payload.message || "Özel oda talepleri alınamadı.");
+        return;
+      }
+
+      const requests = Array.isArray(payload.requests) ? payload.requests : [];
+      const nextRequests = requests.filter((item) => item.roomId === activeRoom.id);
+      setPrivateRequests((previous) => {
+        if (
+          previous.length === nextRequests.length &&
+          previous.every(
+            (row, index) =>
+              row.id === nextRequests[index]?.id &&
+              row.status === nextRequests[index]?.status &&
+              row.roomId === nextRequests[index]?.roomId,
+          )
+        ) {
+          return previous;
+        }
+        return nextRequests;
+      });
+      setPrivateRequestsFeedback(null);
+    } catch {
+      setPrivateRequestsFeedback("Özel oda talepleri alınamadı.");
+    } finally {
+      setIsPrivateRequestsLoading(false);
+    }
+  }
+
+  const handleDecidePrivateRequest = useCallback(async (requestId: string, decision: "accepted" | "rejected") => {
+    setPrivateRequestsFeedback(null);
+    setPrivateRequestDecidingId(requestId);
+    try {
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setPrivateRequestsFeedback("Giriş doğrulaması yapılamadı.");
+        return;
+      }
+
+      const response = await fetch(`/api/private-requests/${requestId}/decide`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ decision }),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (!response.ok || !payload.ok) {
+        setPrivateRequestsFeedback(payload.message || "Talep güncellenemedi.");
+        return;
+      }
+
+      setPrivateRequests((previous) => previous.filter((item) => item.id !== requestId));
+    } catch {
+      setPrivateRequestsFeedback("Talep güncellenemedi.");
+    } finally {
+      setPrivateRequestDecidingId(null);
+    }
+  }, []);
 
   useEffect(() => {
     if (activeTab !== "gift" || hasGiftCatalogLoaded) {
@@ -1265,6 +1429,68 @@ export default function StudioPage() {
               )
             ) : (
               <div>
+                <section className="mb-4 rounded-2xl border border-violet-100 bg-white p-3" data-testid="studio-private-requests-panel">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-600">Özel Oda Talepleri</p>
+                    <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-700">{privateRequests.length}</span>
+                  </div>
+                  {isPrivateRequestsLoading ? (
+                    <p className="mt-2 text-sm text-zinc-500">Talepler yükleniyor...</p>
+                  ) : privateRequests.length === 0 ? (
+                    <p className="mt-2 text-sm text-zinc-500">Bekleyen özel oda talebi yok.</p>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      {privateRequests.map((privateRequest) => (
+                        <article
+                          key={privateRequest.id}
+                          className="rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2"
+                          data-testid="studio-private-request-card"
+                          data-private-request-id={privateRequest.id}
+                        >
+                          <p className="text-sm font-semibold text-zinc-800">{privateRequest.viewerName}</p>
+                          {privateRequest.viewerNote ? (
+                            <p className="mt-1 text-xs text-zinc-600">{privateRequest.viewerNote}</p>
+                          ) : (
+                            <p className="mt-1 text-xs text-zinc-500">Not bırakılmadı.</p>
+                          )}
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {new Date(privateRequest.createdAt).toLocaleString("tr-TR", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              day: "2-digit",
+                              month: "2-digit",
+                            })}
+                          </p>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              data-testid="accept-private-request-button"
+                              onClick={() => {
+                                void handleDecidePrivateRequest(privateRequest.id, "accepted");
+                              }}
+                              disabled={privateRequestDecidingId === privateRequest.id}
+                              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                            >
+                              Kabul Et
+                            </button>
+                            <button
+                              type="button"
+                              data-testid="reject-private-request-button"
+                              onClick={() => {
+                                void handleDecidePrivateRequest(privateRequest.id, "rejected");
+                              }}
+                              disabled={privateRequestDecidingId === privateRequest.id}
+                              className="rounded-lg bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                            >
+                              Reddet
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                  {privateRequestsFeedback ? <p className="mt-2 text-xs text-rose-600">{privateRequestsFeedback}</p> : null}
+                </section>
                 <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
@@ -1288,9 +1514,11 @@ export default function StudioPage() {
                           </div>
                           <p className="mt-1 text-xs text-zinc-500">Son gorulme: {formatSeenText(presenceUser.lastSeenAt)}</p>
                           {presenceUser.userId !== ownerId && presenceUser.role !== "streamer" ? (
-                            <div className="mt-2 flex flex-wrap gap-1.5" data-testid={`presence-actions-${presenceUser.userId}`}>
+                            <div className="mt-2" data-testid="room-moderation-user-row">
+                              <div className="flex flex-wrap gap-1.5" data-testid={`presence-actions-${presenceUser.userId}`}>
                               <button
                                 type="button"
+                                data-testid={mutedUserIds.has(presenceUser.userId) ? "unmute-user-button" : "mute-user-button"}
                                 onClick={() => {
                                   void moderateRoomUser(
                                     presenceUser.userId,
@@ -1304,6 +1532,7 @@ export default function StudioPage() {
                               </button>
                               <button
                                 type="button"
+                                data-testid="kick-user-button"
                                 onClick={() => {
                                   void moderateRoomUser(presenceUser.userId, "kick");
                                 }}
@@ -1314,6 +1543,7 @@ export default function StudioPage() {
                               </button>
                               <button
                                 type="button"
+                                data-testid="ban-user-button"
                                 onClick={() => {
                                   void moderateRoomUser(presenceUser.userId, "ban");
                                 }}
@@ -1322,6 +1552,7 @@ export default function StudioPage() {
                               >
                                 Oda Banı
                               </button>
+                              </div>
                             </div>
                           ) : null}
                         </article>

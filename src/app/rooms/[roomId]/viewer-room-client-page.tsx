@@ -61,6 +61,18 @@ type SendGiftApiResponse = {
   };
 };
 
+type PrivateRequestApiResponse = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+};
+
+type PrivateRoomRequestRealtimeRow = {
+  id: string;
+  viewer_id: string;
+  status: string;
+};
+
 type LiveRoomsBroadcastPayload = {
   action?: "started" | "stopped";
   roomId?: string;
@@ -181,6 +193,9 @@ export default function ViewerRoomClientPage() {
   const [moderationMessage, setModerationMessage] = useState<string | null>(null);
   const [giftEvents, setGiftEvents] = useState<RoomGiftEvent[]>([]);
   const [giftOverlayText, setGiftOverlayText] = useState<string | null>(null);
+  const [privateRequestFeedback, setPrivateRequestFeedback] = useState<string | null>(null);
+  const [isPrivateRequestPending, setIsPrivateRequestPending] = useState(false);
+  const [showInsufficientMinutesModal, setShowInsufficientMinutesModal] = useState(false);
   const messageIdsRef = useRef(new Set<string>());
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -191,6 +206,7 @@ export default function ViewerRoomClientPage() {
   const isLive = state.room?.status === "live";
   const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending || isRoomMuted || isRoomBanned || isRoomKicked;
   const isGiftSendDisabled = !state.isLoggedIn || !isLive || isViewerBanned || isRoomBanned || isRoomKicked || Boolean(pendingGiftId);
+  const isPrivateRequestDisabled = !isLive || isViewerBanned || isRoomBanned || isRoomKicked || isPrivateRequestPending;
 
   function getGiftMinuteCost(gift: GiftCatalogItem) {
     return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
@@ -752,6 +768,42 @@ export default function ViewerRoomClientPage() {
   }, [isLive, removeOwnPresence, roomId, state.userId]);
 
   useEffect(() => {
+    if (!state.userId) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`public:private-requests:viewer:${state.userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "private_room_requests",
+          filter: `viewer_id=eq.${state.userId}`,
+        },
+        (payload) => {
+          const row = (payload.new ?? payload.old ?? null) as PrivateRoomRequestRealtimeRow | null;
+          if (!row || row.viewer_id !== state.userId || payload.eventType !== "UPDATE") {
+            return;
+          }
+
+          if (row.status === "accepted") {
+            setPrivateRequestFeedback("Özel oda talebiniz kabul edildi. Özel oda bağlantısı bir sonraki fazda açılacak.");
+          } else if (row.status === "rejected") {
+            setPrivateRequestFeedback("Özel oda talebiniz reddedildi.");
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [state.userId]);
+
+  useEffect(() => {
     if (!roomId || !isLive || !state.isLoggedIn || !state.userId || isRoomBanned || isRoomKicked) {
       return;
     }
@@ -855,6 +907,59 @@ export default function ViewerRoomClientPage() {
       setGiftFeedback("Hediye gönderilemedi. Lütfen tekrar dene.");
     } finally {
       setPendingGiftId(null);
+    }
+  }
+
+  async function handleCreatePrivateRoomRequest() {
+    if (!state.isLoggedIn) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!roomId || !isLive || isPrivateRequestDisabled) {
+      return;
+    }
+
+    setPrivateRequestFeedback(null);
+    setIsPrivateRequestPending(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const response = await fetch("/api/private-requests", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ roomId }),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as PrivateRequestApiResponse;
+
+      if (!response.ok || !payload.ok) {
+        if (payload.code === "AUTH_REQUIRED") {
+          window.location.href = "/login";
+          return;
+        }
+        if (payload.code === "INSUFFICIENT_MINUTES") {
+          setShowInsufficientMinutesModal(true);
+          return;
+        }
+        if (payload.code === "PENDING_REQUEST_EXISTS") {
+          setPrivateRequestFeedback("Bu yayıncıya bekleyen bir özel oda talebiniz var.");
+          return;
+        }
+        setPrivateRequestFeedback(payload.message || "Özel oda talebi gönderilemedi.");
+        return;
+      }
+
+      setPrivateRequestFeedback("Özel oda talebiniz yayıncıya iletildi.");
+    } catch {
+      setPrivateRequestFeedback("Özel oda talebi gönderilemedi.");
+    } finally {
+      setIsPrivateRequestPending(false);
     }
   }
 
@@ -1063,7 +1168,7 @@ export default function ViewerRoomClientPage() {
             </div>
           </div>
 
-          <div className="mt-3 grid h-14 shrink-0 gap-2 sm:grid-cols-3">
+          <div className="mt-3 grid h-14 shrink-0 gap-2 sm:grid-cols-4">
             <button className="rounded-2xl bg-yellow-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
               CANLI DESTEK
             </button>
@@ -1073,7 +1178,29 @@ export default function ViewerRoomClientPage() {
             <button className="rounded-2xl bg-pink-400 px-4 py-2 text-sm font-black text-white transition hover:bg-pink-300">
               MESAJLARIM
             </button>
+            <button
+              type="button"
+              data-testid="private-room-request-button"
+              onClick={() => {
+                void handleCreatePrivateRoomRequest();
+              }}
+              disabled={isPrivateRequestDisabled}
+              className="rounded-2xl bg-violet-500 px-4 py-2 text-sm font-black text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            >
+              {isPrivateRequestPending ? "GONDERILIYOR..." : "OZEL ODA DAVETI"}
+            </button>
           </div>
+          {privateRequestFeedback ? (
+            /talebiniz kabul edildi|talebiniz reddedildi/i.test(privateRequestFeedback) ? (
+              <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-request-status-message">
+                {privateRequestFeedback}
+              </p>
+            ) : (
+              <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-request-feedback">
+                {privateRequestFeedback}
+              </p>
+            )
+          ) : null}
         </div>
 
         <aside className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden">
@@ -1282,6 +1409,34 @@ export default function ViewerRoomClientPage() {
           </div>
         </aside>
       </section>
+      {showInsufficientMinutesModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+          <section className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" data-testid="insufficient-minutes-modal">
+            <h2 className="text-lg font-black text-zinc-900">Süreniz yeterli değil!</h2>
+            <p className="mt-2 text-sm text-zinc-600">
+              Özel odaya geçmek için süreniz yeterli değil. Dakika satın alıp tekrar deneyiniz.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/member";
+                }}
+                className="rounded-xl bg-pink-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-pink-400"
+              >
+                Dakika Satın Al
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowInsufficientMinutesModal(false)}
+                className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100"
+              >
+                Kapat
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
