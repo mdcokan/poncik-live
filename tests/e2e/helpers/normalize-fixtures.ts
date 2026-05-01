@@ -1,11 +1,15 @@
 import type { APIRequestContext } from "@playwright/test";
 
-export async function normalizeTestFixtures(request: APIRequestContext) {
+type NormalizeFixtureOptions = {
+  viewerBalanceMinutes?: number;
+};
+
+export async function normalizeTestFixtures(request: APIRequestContext, options?: NormalizeFixtureOptions) {
   const fixtureSecret = process.env.TEST_FIXTURE_SECRET;
   const response = await request.post("/api/test/normalize-fixtures", {
     timeout: 30_000,
     headers: fixtureSecret ? { "x-test-fixture-secret": fixtureSecret } : undefined,
-    data: {},
+    data: options ?? {},
   });
 
   if (!response.ok()) {

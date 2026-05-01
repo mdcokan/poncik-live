@@ -16,6 +16,10 @@ type ProfileRow = {
   display_name: string | null;
 };
 
+type WalletRow = {
+  balance: number | null;
+};
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -96,8 +100,16 @@ export async function GET(request: Request) {
   }
 
   const profileIds = [data.streamer_id, data.viewer_id];
-  const { data: profiles } = await supabase.from("profiles").select("id, display_name").in("id", profileIds);
+  const [{ data: profiles }, { data: viewerWallet }] = await Promise.all([
+    supabase.from("profiles").select("id, display_name").in("id", profileIds),
+    supabase.from("wallets").select("balance").eq("user_id", data.viewer_id).maybeSingle<WalletRow>(),
+  ]);
   const profileMap = new Map(((profiles ?? []) as ProfileRow[]).map((profile) => [profile.id, profile.display_name?.trim() || "Kullanıcı"]));
+  const viewerBalanceMinutes = Math.max(0, Math.floor(viewerWallet?.balance ?? 0));
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(data.started_at).getTime()) / 1000));
+  const estimatedChargedMinutes = Math.max(1, Math.ceil(elapsedSeconds / 60));
+  const estimatedRemainingMinutes = Math.max(0, viewerBalanceMinutes - estimatedChargedMinutes);
+  const isLowBalance = estimatedRemainingMinutes <= 2;
 
   return noStoreJson({
     ok: true,
@@ -111,6 +123,11 @@ export async function GET(request: Request) {
       viewerName: profileMap.get(data.viewer_id) ?? "Üye",
       status: data.status,
       startedAt: data.started_at,
+      viewerBalanceMinutes,
+      elapsedSeconds,
+      estimatedChargedMinutes,
+      estimatedRemainingMinutes,
+      isLowBalance,
     },
   });
 }

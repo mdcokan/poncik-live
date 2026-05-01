@@ -70,6 +70,11 @@ type PrivateSessionSummary = {
   viewerName: string;
   status: string;
   startedAt: string;
+  viewerBalanceMinutes?: number;
+  elapsedSeconds?: number;
+  estimatedChargedMinutes?: number;
+  estimatedRemainingMinutes?: number;
+  isLowBalance?: boolean;
 };
 
 type PrivateSessionApiResponse = {
@@ -84,9 +89,12 @@ type EndSessionApiResponse = {
   code?: string;
   message?: string;
   session?: {
+    status?: string;
     durationSeconds?: number;
     chargedMinutes?: number;
+    viewerSpentMinutes?: number;
     streamerEarnedMinutes?: number;
+    platformFeeMinutes?: number;
   };
 };
 
@@ -986,7 +994,13 @@ export default function StudioPage() {
       if (!response.ok || !payload.ok) {
         return;
       }
-      setActivePrivateSession(payload.session && payload.session.roomId === activeRoom.id ? payload.session : null);
+      const nextSession = payload.session && payload.session.roomId === activeRoom.id ? payload.session : null;
+      setActivePrivateSession((previous) => {
+        if (previous?.sessionId && !nextSession?.sessionId && !privateSessionResult) {
+          setPrivateSessionResult("Özel oda kapatıldı.");
+        }
+        return nextSession;
+      });
     } catch {
       // keep stale value on transient failures
     }
@@ -1623,6 +1637,9 @@ export default function StudioPage() {
                     streamerName={activePrivateSession.streamerName}
                     startedAt={activePrivateSession.startedAt}
                     currentUserRole="streamer"
+                    viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
+                    initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
+                    autoEndWhenBalanceLikelyDepleted={false}
                     onEnd={endPrivateSession}
                     isEnding={isPrivateSessionEnding}
                     resultText={privateSessionResult ?? undefined}

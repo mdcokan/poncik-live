@@ -56,6 +56,16 @@ export async function POST(request: Request) {
   }
 
   try {
+    let requestedViewerBalanceMinutes: number | null = null;
+    try {
+      const payload = (await request.json()) as { viewerBalanceMinutes?: unknown };
+      if (typeof payload?.viewerBalanceMinutes === "number" && Number.isFinite(payload.viewerBalanceMinutes)) {
+        requestedViewerBalanceMinutes = Math.max(0, Math.floor(payload.viewerBalanceMinutes));
+      }
+    } catch {
+      requestedViewerBalanceMinutes = null;
+    }
+
     const adminClient = createClient(supabaseUrl, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
@@ -228,15 +238,16 @@ export async function POST(request: Request) {
 
     const { data: wallet } = await adminClient.from("wallets").select("balance").eq("user_id", fixtureUsers[VIEWER_EMAIL].id).maybeSingle();
     const currentBalance = typeof wallet?.balance === "number" ? wallet.balance : 0;
-    if (currentBalance < 500) {
-      const topup = 500 - currentBalance;
+    const targetViewerBalance = requestedViewerBalanceMinutes ?? 500;
+    if (currentBalance !== targetViewerBalance) {
+      const delta = targetViewerBalance - currentBalance;
       const { error: walletAdjustError } = await adminClient.rpc("admin_adjust_wallet", {
         p_user_id: fixtureUsers[VIEWER_EMAIL].id,
-        p_amount: topup,
+        p_amount: delta,
         p_reason: "e2e fixture normalize",
       });
       if (walletAdjustError) {
-        throw new Error(`Failed to top up fixture wallet: ${walletAdjustError.message}`);
+        throw new Error(`Failed to normalize fixture wallet: ${walletAdjustError.message}`);
       }
     }
 

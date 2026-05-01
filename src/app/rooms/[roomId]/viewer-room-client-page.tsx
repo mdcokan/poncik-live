@@ -85,6 +85,11 @@ type PrivateSessionSummary = {
   viewerName: string;
   status: string;
   startedAt: string;
+  viewerBalanceMinutes?: number;
+  elapsedSeconds?: number;
+  estimatedChargedMinutes?: number;
+  estimatedRemainingMinutes?: number;
+  isLowBalance?: boolean;
 };
 
 type PrivateSessionApiResponse = {
@@ -99,8 +104,12 @@ type EndSessionApiResponse = {
   code?: string;
   message?: string;
   session?: {
+    status?: string;
     durationSeconds?: number;
     chargedMinutes?: number;
+    viewerSpentMinutes?: number;
+    streamerEarnedMinutes?: number;
+    platformFeeMinutes?: number;
   };
 };
 
@@ -1058,7 +1067,8 @@ export default function ViewerRoomClientPage() {
       if (!response.ok || !payload.ok) {
         return;
       }
-      setActivePrivateSession(payload.session && payload.session.roomId === roomId ? payload.session : null);
+      const nextSession = payload.session && payload.session.roomId === roomId ? payload.session : null;
+      setActivePrivateSession(nextSession);
     } catch {
       // keep stale value on transient errors
     }
@@ -1111,7 +1121,7 @@ export default function ViewerRoomClientPage() {
     }
   }
 
-  async function endPrivateSession() {
+  async function endPrivateSession(reason?: string) {
     if (!activePrivateSession?.sessionId || isPrivateSessionEnding) {
       return;
     }
@@ -1133,7 +1143,7 @@ export default function ViewerRoomClientPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify(reason ? { reason } : {}),
         cache: "no-store",
       });
       const payload = (await response.json().catch(() => ({}))) as EndSessionApiResponse;
@@ -1144,7 +1154,12 @@ export default function ViewerRoomClientPage() {
       const spent =
         payload.session?.chargedMinutes ??
         (typeof payload.session?.durationSeconds === "number" ? Math.max(1, Math.ceil(payload.session.durationSeconds / 60)) : 0);
-      setPrivateSessionResult(`Özel oda kapatıldı. Harcanan süre: ${spent} dk`);
+      const isBalanceDepleted = reason === "balance_depleted";
+      setPrivateSessionResult(
+        isBalanceDepleted
+          ? `Süre bittiği için özel oda kapatıldı. Harcanan süre: ${spent} dk`
+          : `Özel oda kapatıldı. Harcanan süre: ${spent} dk`,
+      );
       setActivePrivateSession(null);
     } catch {
       setPrivateSessionError("Özel oda kapatılamadı.");
@@ -1398,7 +1413,13 @@ export default function ViewerRoomClientPage() {
               streamerName={activePrivateSession.streamerName}
               startedAt={activePrivateSession.startedAt}
               currentUserRole="viewer"
-              onEnd={endPrivateSession}
+              viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
+              initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
+              lowBalanceThresholdMinutes={2}
+              autoEndWhenBalanceLikelyDepleted
+              onAutoEnd={() => endPrivateSession("balance_depleted")}
+              autoEndReason="Süre bittiği için özel oda kapatılıyor..."
+              onEnd={() => endPrivateSession()}
               isEnding={isPrivateSessionEnding}
               resultText={privateSessionResult ?? undefined}
               errorText={privateSessionError ?? undefined}

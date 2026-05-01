@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type PrivateRoomSessionPanelProps = {
   sessionId: string;
@@ -12,6 +12,12 @@ type PrivateRoomSessionPanelProps = {
   isEnding?: boolean;
   resultText?: string;
   errorText?: string;
+  viewerBalanceMinutes?: number | null;
+  initialEstimatedRemainingMinutes?: number | null;
+  lowBalanceThresholdMinutes?: number;
+  autoEndWhenBalanceLikelyDepleted?: boolean;
+  onAutoEnd?: () => Promise<void>;
+  autoEndReason?: string;
 };
 
 function getInitial(name: string) {
@@ -56,9 +62,28 @@ export default function PrivateRoomSessionPanel({
   isEnding = false,
   resultText,
   errorText,
+  viewerBalanceMinutes = null,
+  initialEstimatedRemainingMinutes = null,
+  lowBalanceThresholdMinutes = 2,
+  autoEndWhenBalanceLikelyDepleted = false,
+  onAutoEnd,
+  autoEndReason = "Süre bittiği için özel oda kapatılıyor...",
 }: PrivateRoomSessionPanelProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [isAutoEnding, setIsAutoEnding] = useState(false);
+  const autoEndTriggeredRef = useRef(false);
   const startedTimestamp = useMemo(() => new Date(startedAt).getTime(), [startedAt]);
+  const estimatedChargedMinutes = useMemo(() => Math.max(1, Math.ceil(elapsedSeconds / 60)), [elapsedSeconds]);
+  const estimatedRemainingMinutes = useMemo(() => {
+    if (typeof viewerBalanceMinutes !== "number") {
+      return typeof initialEstimatedRemainingMinutes === "number" ? Math.max(0, Math.floor(initialEstimatedRemainingMinutes)) : null;
+    }
+    return Math.max(0, Math.floor(viewerBalanceMinutes) - estimatedChargedMinutes);
+  }, [estimatedChargedMinutes, initialEstimatedRemainingMinutes, viewerBalanceMinutes]);
+  const showLowBalanceWarning =
+    currentUserRole === "viewer" &&
+    typeof estimatedRemainingMinutes === "number" &&
+    estimatedRemainingMinutes <= lowBalanceThresholdMinutes;
 
   useEffect(() => {
     function syncElapsed() {
@@ -77,8 +102,40 @@ export default function PrivateRoomSessionPanel({
     };
   }, [startedTimestamp, sessionId]);
 
+  useEffect(() => {
+    if (!autoEndWhenBalanceLikelyDepleted || currentUserRole !== "viewer" || typeof viewerBalanceMinutes !== "number" || !onAutoEnd) {
+      return;
+    }
+    if (
+      estimatedRemainingMinutes === null ||
+      estimatedRemainingMinutes > 0 ||
+      elapsedSeconds < 60 ||
+      autoEndTriggeredRef.current ||
+      isEnding
+    ) {
+      return;
+    }
+    autoEndTriggeredRef.current = true;
+    setIsAutoEnding(true);
+    void onAutoEnd().finally(() => {
+      setIsAutoEnding(false);
+    });
+  }, [
+    autoEndWhenBalanceLikelyDepleted,
+    currentUserRole,
+    estimatedRemainingMinutes,
+    elapsedSeconds,
+    isEnding,
+    onAutoEnd,
+    viewerBalanceMinutes,
+  ]);
+
   return (
-    <section className="mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4" data-testid="private-session-panel">
+    <section
+      className="mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4"
+      data-testid="private-session-panel"
+      data-session-id={sessionId}
+    >
       <h2 className="text-lg font-black text-violet-900">Özel Oda Aktif</h2>
       <p className="mt-1 text-sm text-violet-800">Bu fazda kamera altyapısı hazırlık ekranı olarak gösteriliyor.</p>
 
@@ -90,10 +147,22 @@ export default function PrivateRoomSessionPanel({
       <p className="mt-4 text-sm font-semibold text-zinc-800" data-testid="private-session-timer">
         Geçen süre: {formatElapsed(elapsedSeconds)}
       </p>
+      {typeof estimatedRemainingMinutes === "number" ? (
+        <p className="mt-1 text-sm font-semibold text-zinc-800" data-testid="private-session-remaining">
+          {currentUserRole === "viewer" ? "Yaklaşık kalan süre" : "Üyenin yaklaşık kalan süresi"}: {estimatedRemainingMinutes} dk
+        </p>
+      ) : null}
       <p className="mt-2 text-xs text-zinc-600">Bu oturum en az 1 dk olarak ücretlendirilir.</p>
       <p className="text-xs text-zinc-600">Kapatıldığında süre yukarı yuvarlanarak dakika bakiyenden düşer.</p>
-      {currentUserRole === "viewer" ? (
-        <p className="mt-1 text-xs font-medium text-amber-700">Dakika bakiyen düşükse özel oda kısa sürede kapanabilir.</p>
+      {showLowBalanceWarning ? (
+        <p className="mt-1 text-xs font-medium text-amber-700" data-testid="private-session-low-balance-warning">
+          Dakika bakiyeniz azalıyor. Özel oda kısa süre içinde kapanabilir.
+        </p>
+      ) : null}
+      {isAutoEnding ? (
+        <p className="mt-1 text-xs font-medium text-rose-700" data-testid="private-session-auto-ending">
+          {autoEndReason}
+        </p>
       ) : null}
 
       <button
@@ -102,7 +171,7 @@ export default function PrivateRoomSessionPanel({
         onClick={() => {
           void onEnd();
         }}
-        disabled={isEnding}
+        disabled={isEnding || isAutoEnding}
         className="mt-4 rounded-xl bg-rose-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isEnding ? "Bitiriliyor..." : "Özel Odayı Bitir"}
