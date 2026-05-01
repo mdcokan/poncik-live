@@ -16,6 +16,7 @@ import {
   getSupabaseBrowserClient,
 } from "@/lib/supabase-browser";
 import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
+import { usePrivateRoomSignaling } from "@/hooks/use-private-room-signaling";
 
 type RoomStatus = "offline" | "live" | "private";
 
@@ -197,6 +198,10 @@ export default function StudioPage() {
   const [chatIdentity, setChatIdentity] = useState<{ userId: string | null; displayName: string | null }>({
     userId: null,
     displayName: null,
+  });
+  const privateRoomSignaling = usePrivateRoomSignaling({
+    sessionId: activePrivateSession?.sessionId ?? "",
+    enabled: Boolean(activePrivateSession?.sessionId),
   });
   const roomMessagesRef = useRef<HTMLDivElement | null>(null);
   const messageIdsRef = useRef(new Set<string>());
@@ -1745,6 +1750,8 @@ export default function StudioPage() {
                     isEnding={isPrivateSessionEnding}
                     resultText={privateSessionResult ?? undefined}
                     errorText={privateSessionError ?? undefined}
+                    onSendSignal={privateRoomSignaling.sendSignal}
+                    lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
                   />
                 ) : null}
                 {!activePrivateSession && privateSessionResult ? (

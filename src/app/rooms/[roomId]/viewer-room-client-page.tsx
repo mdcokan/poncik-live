@@ -17,6 +17,7 @@ import {
   LIVE_ROOMS_CHANGED_EVENT,
 } from "@/lib/supabase-browser";
 import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
+import { usePrivateRoomSignaling } from "@/hooks/use-private-room-signaling";
 
 type RoomRow = {
   id: string;
@@ -268,6 +269,10 @@ export default function ViewerRoomClientPage() {
   const [privateSessionError, setPrivateSessionError] = useState<string | null>(null);
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
+  const privateRoomSignaling = usePrivateRoomSignaling({
+    sessionId: activePrivateSession?.sessionId ?? "",
+    enabled: Boolean(activePrivateSession?.sessionId),
+  });
   const messageIdsRef = useRef(new Set<string>());
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1518,6 +1523,8 @@ export default function ViewerRoomClientPage() {
               isEnding={isPrivateSessionEnding}
               resultText={privateSessionResult ?? undefined}
               errorText={privateSessionError ?? undefined}
+              onSendSignal={privateRoomSignaling.sendSignal}
+              lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
             />
           ) : null}
           {!activePrivateSession && privateSessionResult ? (
