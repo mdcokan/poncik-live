@@ -76,6 +76,15 @@ type UserDetail = {
     chargedMinutes: number;
     streamerEarnedMinutes: number;
   }>;
+  withdrawalRequests: Array<{
+    id: string;
+    requestedMinutes: number;
+    status: "pending" | "approved" | "rejected" | "cancelled";
+    paymentNote: string | null;
+    adminNote: string | null;
+    createdAt: string;
+    decidedAt: string | null;
+  }>;
 };
 
 type DetailApiResponse = {
@@ -168,6 +177,7 @@ export default function AdminUserDetailPage() {
         receivedGifts: payload.receivedGifts ?? [],
         actionLogs: payload.actionLogs ?? [],
         privateSessions: payload.privateSessions ?? [],
+        withdrawalRequests: payload.withdrawalRequests ?? [],
       };
       setDetail(nextDetail);
       if (nextDetail.profile.role !== "owner") {
@@ -553,6 +563,30 @@ export default function AdminUserDetailPage() {
                 {detail.privateSessions.length === 0 ? <p className="text-sm text-slate-500">Son 20 session içinde kayıt yok.</p> : null}
               </div>
             </section>
+
+            {detail.profile.role === "streamer" ? (
+              <section className="mt-4 rounded-2xl border border-cyan-100 bg-white p-4">
+                <h2 className="text-sm font-semibold text-indigo-800">Yayinci Cekim Talepleri</h2>
+                <div className="mt-3 space-y-2">
+                  {detail.withdrawalRequests.map((request) => (
+                    <article key={request.id} className="rounded-xl border border-cyan-100 px-3 py-2 text-sm">
+                      <p className="font-semibold text-slate-800">
+                        {request.requestedMinutes} dk • {request.status}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {formatDateTime(request.createdAt)}
+                        {request.decidedAt ? ` • Karar: ${formatDateTime(request.decidedAt)}` : ""}
+                      </p>
+                      {request.paymentNote ? <p className="mt-1 text-xs text-slate-600">Not: {request.paymentNote}</p> : null}
+                      {request.adminNote ? <p className="mt-1 text-xs text-slate-600">Admin notu: {request.adminNote}</p> : null}
+                    </article>
+                  ))}
+                  {detail.withdrawalRequests.length === 0 ? (
+                    <p className="text-sm text-slate-500">Son 20 cekim talebi icinde kayit yok.</p>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
 
             <section className="mt-4 rounded-2xl border border-cyan-100 bg-white p-4">
               <h2 className="text-sm font-semibold text-indigo-800">Admin İşlem Geçmişi</h2>

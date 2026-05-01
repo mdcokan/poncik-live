@@ -38,6 +38,18 @@ type PendingMinuteOrder = {
   createdAt: string;
 };
 
+type PendingWithdrawal = {
+  id: string;
+  streamerId: string;
+  streamerName: string;
+  requestedMinutes: number;
+  status: "pending";
+  paymentNote: string | null;
+  adminNote: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+};
+
 export default function AdminFinancePage() {
   const { loading, authorized, message, signOut } = useAdminAccess();
   const [walletSummaries, setWalletSummaries] = useState<WalletSummary[]>([]);
@@ -52,6 +64,9 @@ export default function AdminFinancePage() {
   const [pendingOrders, setPendingOrders] = useState<PendingMinuteOrder[]>([]);
   const [orderNoteById, setOrderNoteById] = useState<Record<string, string>>({});
   const [orderSubmittingId, setOrderSubmittingId] = useState<string | null>(null);
+  const [pendingWithdrawals, setPendingWithdrawals] = useState<PendingWithdrawal[]>([]);
+  const [withdrawalNoteById, setWithdrawalNoteById] = useState<Record<string, string>>({});
+  const [withdrawalSubmittingId, setWithdrawalSubmittingId] = useState<string | null>(null);
 
   async function loadFinanceData() {
     const [summaries, adjustments] = await Promise.all([fetchAdminWalletSummaries(50), fetchAdminWalletAdjustments(50)]);
@@ -114,6 +129,22 @@ export default function AdminFinancePage() {
     }
 
     setPendingOrders(pendingPayload.orders ?? []);
+
+    const pendingWithdrawalsResponse = await fetch("/api/admin/withdrawals?status=pending&limit=50", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    });
+    const pendingWithdrawalsPayload = (await pendingWithdrawalsResponse.json()) as {
+      ok?: boolean;
+      requests?: PendingWithdrawal[];
+    };
+    if (!pendingWithdrawalsResponse.ok || !pendingWithdrawalsPayload.ok) {
+      setPendingWithdrawals([]);
+      return;
+    }
+    setPendingWithdrawals(pendingWithdrawalsPayload.requests ?? []);
   }
 
   useEffect(() => {
@@ -143,6 +174,11 @@ export default function AdminFinancePage() {
     }
     return { totalAmount, totalCount };
   }, [giftTransactions]);
+
+  const pendingWithdrawalMinutesTotal = useMemo(
+    () => pendingWithdrawals.reduce((total, request) => total + request.requestedMinutes, 0),
+    [pendingWithdrawals],
+  );
 
   async function submitAdjustment(userId: string, multiplier: 1 | -1) {
     const rawAmount = Number.parseInt(amountByUserId[userId] ?? "", 10);
@@ -237,6 +273,48 @@ export default function AdminFinancePage() {
     }
   }
 
+  async function decideWithdrawal(requestId: string, decision: "approved" | "rejected") {
+    try {
+      setWithdrawalSubmittingId(requestId);
+      setFeedback(null);
+      const supabase = getSupabaseClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        setFeedback({ type: "error", message: "Oturum bulunamadi. Tekrar giris yap." });
+        return;
+      }
+
+      const response = await fetch(`/api/admin/withdrawals/${requestId}/decide`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          decision,
+          adminNote: withdrawalNoteById[requestId]?.trim() || null,
+        }),
+      });
+
+      const payload = (await response.json()) as { ok?: boolean; message?: string };
+      if (!response.ok || !payload.ok) {
+        setFeedback({ type: "error", message: payload.message || "Cekim talebi guncellenemedi." });
+        return;
+      }
+
+      setFeedback({ type: "success", message: decision === "approved" ? "Cekim talebi onaylandi." : "Cekim talebi reddedildi." });
+      setWithdrawalNoteById((previous) => ({ ...previous, [requestId]: "" }));
+      await loadFinanceData();
+    } catch {
+      setFeedback({ type: "error", message: "Cekim talebi guncellenemedi." });
+    } finally {
+      setWithdrawalSubmittingId(null);
+    }
+  }
+
   if (loading || !authorized) {
     return <AdminAccessState loading={loading} authorized={authorized} message={message} />;
   }
@@ -247,7 +325,7 @@ export default function AdminFinancePage() {
       description="Gelir, gider, dakika hareketleri ve yayinci kazanclari."
       onLogout={signOut}
     >
-      <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <section className="grid grid-cols-1 gap-3 md:grid-cols-4">
         <article className="rounded-3xl bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Toplam dakika bakiyesi</p>
           <p className="mt-2 text-2xl font-bold text-indigo-800">{totalWalletBalance} dk</p>
@@ -259,6 +337,10 @@ export default function AdminFinancePage() {
         <article className="rounded-3xl bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Bugunku gift adedi</p>
           <p className="mt-2 text-2xl font-bold text-indigo-800">{todayGiftStats.totalCount}</p>
+        </article>
+        <article className="rounded-3xl bg-white p-5 shadow-sm">
+          <p className="text-sm text-slate-500">Bekleyen cekim talepleri toplami</p>
+          <p className="mt-2 text-2xl font-bold text-indigo-800">{pendingWithdrawalMinutesTotal} dk</p>
         </article>
       </section>
 
@@ -403,6 +485,59 @@ export default function AdminFinancePage() {
             </article>
           ))}
           {pendingOrders.length === 0 ? <p className="text-sm text-slate-500">Bekleyen talep yok.</p> : null}
+        </div>
+      </section>
+
+      <section className="rounded-3xl bg-white p-5 shadow-sm">
+        <h2 className="text-lg font-semibold text-indigo-800">Bekleyen yayinci cekim talepleri</h2>
+        <p className="mt-1 text-sm text-slate-500">Son 50 bekleyen talep listelenir.</p>
+        <div data-testid="admin-withdrawals-panel" className="mt-4 space-y-3">
+          {pendingWithdrawals.map((request) => (
+            <article
+              key={request.id}
+              data-testid="admin-withdrawal-row"
+              className="rounded-2xl border border-cyan-100 p-4"
+            >
+              <p className="font-semibold text-slate-800">{request.streamerName}</p>
+              <p className="text-sm text-slate-600">Talep: {request.requestedMinutes} dk</p>
+              <p className="text-sm text-slate-600">Odeme notu: {request.paymentNote || "-"}</p>
+              <p className="text-sm text-slate-500">Tarih: {new Date(request.createdAt).toLocaleString("tr-TR")}</p>
+              <input
+                type="text"
+                maxLength={500}
+                placeholder="Admin notu"
+                value={withdrawalNoteById[request.id] ?? ""}
+                onChange={(event) =>
+                  setWithdrawalNoteById((previous) => ({
+                    ...previous,
+                    [request.id]: event.target.value,
+                  }))
+                }
+                className="mt-3 w-full rounded-xl border border-cyan-200 px-3 py-2 text-sm outline-none"
+              />
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="approve-withdrawal-button"
+                  disabled={withdrawalSubmittingId === request.id}
+                  onClick={() => void decideWithdrawal(request.id, "approved")}
+                  className="rounded-xl bg-emerald-100 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-200 disabled:opacity-60"
+                >
+                  Onayla
+                </button>
+                <button
+                  type="button"
+                  data-testid="reject-withdrawal-button"
+                  disabled={withdrawalSubmittingId === request.id}
+                  onClick={() => void decideWithdrawal(request.id, "rejected")}
+                  className="rounded-xl bg-rose-100 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-200 disabled:opacity-60"
+                >
+                  Reddet
+                </button>
+              </div>
+            </article>
+          ))}
+          {pendingWithdrawals.length === 0 ? <p className="text-sm text-slate-500">Bekleyen cekim talebi yok.</p> : null}
         </div>
       </section>
 

@@ -123,7 +123,7 @@ test("private room session starts and charges member minutes", async ({ browser,
       .toBeLessThanOrEqual(startBalance - 1);
 
     await streamerPage.goto("/streamer");
-    await expect(streamerPage.getByText(/bug[üu]nk[üu] özel oda kazanc[ıi]/i)).toBeVisible({ timeout: 20_000 });
+    await expect(streamerPage.getByRole("heading", { name: /bugunku ozel oda kazanci/i }).first()).toBeVisible({ timeout: 20_000 });
     await expect(streamerPage.getByText(/net:\s*[1-9]\d*\s*dk/i).first()).toBeVisible({ timeout: 20_000 });
 
     await loginWithStabilizedAuth(

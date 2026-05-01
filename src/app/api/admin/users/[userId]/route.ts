@@ -76,6 +76,16 @@ type PrivateSessionRow = {
   streamer_earned_minutes: number;
 };
 
+type WithdrawalRequestRow = {
+  id: string;
+  requested_minutes: number;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  payment_note: string | null;
+  admin_note: string | null;
+  created_at: string;
+  decided_at: string | null;
+};
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -171,6 +181,7 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
       { data: actionLogRows, error: actionLogsError },
       { data: privateSessionViewerRows, error: privateSessionViewerError },
       { data: privateSessionStreamerRows, error: privateSessionStreamerError },
+      { data: withdrawalRows, error: withdrawalError },
     ] = await Promise.all([
       supabase
         .from("minute_purchase_orders")
@@ -214,6 +225,14 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
         .eq("streamer_id", userId)
         .order("started_at", { ascending: false })
         .limit(DETAIL_LIMIT),
+      profileRow.role === "streamer"
+        ? supabase
+            .from("streamer_withdrawal_requests")
+            .select("id, requested_minutes, status, payment_note, admin_note, created_at, decided_at")
+            .eq("streamer_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(DETAIL_LIMIT)
+        : Promise.resolve({ data: [] as WithdrawalRequestRow[], error: null }),
     ]);
 
     if (
@@ -223,7 +242,8 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
       receivedGiftsError ||
       actionLogsError ||
       privateSessionViewerError ||
-      privateSessionStreamerError
+      privateSessionStreamerError ||
+      withdrawalError
     ) {
       return noStoreJson({ ok: false, message: "Kullanıcı detayı yüklenemedi." }, { status: 500 });
     }
@@ -328,6 +348,15 @@ export async function GET(request: Request, context: { params: Promise<{ userId:
         endedAt: row.ended_at,
         chargedMinutes: row.charged_minutes,
         streamerEarnedMinutes: row.streamer_earned_minutes,
+      })),
+      withdrawalRequests: ((withdrawalRows as WithdrawalRequestRow[] | null) ?? []).map((row) => ({
+        id: row.id,
+        requestedMinutes: row.requested_minutes,
+        status: row.status,
+        paymentNote: row.payment_note,
+        adminNote: row.admin_note,
+        createdAt: row.created_at,
+        decidedAt: row.decided_at,
       })),
     });
   } catch {
