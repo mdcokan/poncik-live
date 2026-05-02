@@ -125,6 +125,7 @@ export async function GET(request: Request) {
       { data: todayGiftRows },
       { data: recentPrivateRoomRows },
       { data: recentWithdrawalRows },
+      { data: recentGiftRows },
     ] = await Promise.all([
       supabase
         .from("streamer_earnings")
@@ -162,6 +163,12 @@ export async function GET(request: Request) {
         .eq("streamer_id", user.id)
         .order("created_at", { ascending: false })
         .limit(10),
+      supabase
+        .from("gift_transactions")
+        .select("id, amount, created_at")
+        .eq("receiver_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(10),
     ]);
 
     const totalPrivateRoomNetMinutes = sumFromRows(totalPrivateRoomRows, "net_minutes");
@@ -197,6 +204,13 @@ export async function GET(request: Request) {
         adminNote: row.admin_note,
         createdAt: row.created_at,
         decidedAt: row.decided_at,
+      })),
+      recentGifts: (
+        (recentGiftRows as { id: string; amount: number; created_at: string }[] | null) ?? []
+      ).map((row) => ({
+        id: row.id,
+        amount: row.amount,
+        createdAt: row.created_at,
       })),
     });
   } catch {

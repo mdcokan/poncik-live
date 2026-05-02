@@ -160,10 +160,12 @@ test("streamer withdrawal request flow works end-to-end", async ({ browser, requ
     const availableBeforeRequest = latestSnapshot.availableWithdrawalMinutes;
     expect(availableBeforeRequest).toBeGreaterThan(0);
 
+    await streamerPage.getByTestId("streamer-sidebar-private-earnings").click();
+    await expect(streamerPage.getByTestId("streamer-section-private-earnings")).toBeVisible({ timeout: 15_000 });
     await streamerPage.getByTestId("streamer-withdrawal-form").locator('input[type="number"]').fill("1");
     await streamerPage.getByTestId("streamer-withdrawal-form").locator("textarea").fill("Playwright test IBAN notu");
     await streamerPage.getByTestId("streamer-withdrawal-submit").click();
-    await expect(streamerPage.getByText(/Cekim talebin alindi/i)).toBeVisible({ timeout: 20_000 });
+    await expect(streamerPage.getByText(/Çekim talebin alındı|Cekim talebin alindi/i)).toBeVisible({ timeout: 20_000 });
     await expect(streamerPage.getByTestId("streamer-withdrawal-row").first()).toContainText(/pending/i, { timeout: 20_000 });
 
     await loginWithStabilizedAuth(

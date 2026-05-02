@@ -35,95 +35,97 @@ async function extractSessionFromPage(page: Page) {
   });
 }
 
-test("direct messages between member and streamer", async ({ browser, request }, testInfo) => {
-  test.setTimeout(180_000);
+test.describe("dm messaging", () => {
+  test.describe.configure({ timeout: 180_000 });
 
-  await normalizeTestFixtures(request);
+  test("direct messages between member and streamer", async ({ browser, request }, testInfo) => {
+    await normalizeTestFixtures(request);
 
-  const marker = `dm-${Date.now()}`;
-  const veliOpening = `Merhaba Eda test mesajı ${marker}`;
-  const edaReply = `Merhaba Veli cevap ${marker}`;
+    const marker = `dm-${Date.now()}`;
+    const veliOpening = `Merhaba Eda test mesajı ${marker}`;
+    const edaReply = `Merhaba Veli cevap ${marker}`;
 
-  const streamerContext = await browser.newContext();
-  const memberContext = await browser.newContext();
-  const streamerPage = await streamerContext.newPage();
-  const memberPage = await memberContext.newPage();
+    const streamerContext = await browser.newContext();
+    const memberContext = await browser.newContext();
+    const streamerPage = await streamerContext.newPage();
+    const memberPage = await memberContext.newPage();
 
-  try {
-    await loginWithStabilizedAuth(
-      streamerPage,
-      {
-        role: "streamer",
-        loginPath: "/streamer-login",
-        email: STREAMER_EMAIL,
-        password: PASSWORD,
-        successUrl: /\/(streamer|studio)(?:\/|$)/,
-        targetUrl: "/streamer",
-        successIndicator: streamerPage.getByRole("heading", { name: /Yayinci Ana Ekran/i }),
-      },
-      testInfo,
-    );
+    try {
+      await loginWithStabilizedAuth(
+        streamerPage,
+        {
+          role: "streamer",
+          loginPath: "/streamer-login",
+          email: STREAMER_EMAIL,
+          password: PASSWORD,
+          successUrl: /\/(streamer|studio)(?:\/|$)/,
+          targetUrl: "/streamer",
+          successIndicator: streamerPage.getByTestId("streamer-section-dashboard"),
+        },
+        testInfo,
+      );
 
-    const streamerSession = await extractSessionFromPage(streamerPage);
-    expect(streamerSession?.userId).toBeTruthy();
-    const edaUserId = streamerSession!.userId;
+      const streamerSession = await extractSessionFromPage(streamerPage);
+      expect(streamerSession?.userId).toBeTruthy();
+      const edaUserId = streamerSession!.userId;
 
-    await loginWithStabilizedAuth(
-      memberPage,
-      {
-        role: "member",
-        loginPath: "/login",
-        email: MEMBER_EMAIL,
-        password: PASSWORD,
-        successUrl: /\/member(?:\/|$)/,
-        targetUrl: "/member",
-        successIndicator: memberPage.getByTestId("member-section-home"),
-      },
-      testInfo,
-    );
+      await loginWithStabilizedAuth(
+        memberPage,
+        {
+          role: "member",
+          loginPath: "/login",
+          email: MEMBER_EMAIL,
+          password: PASSWORD,
+          successUrl: /\/member(?:\/|$)/,
+          targetUrl: "/member",
+          successIndicator: memberPage.getByTestId("member-section-home"),
+        },
+        testInfo,
+      );
 
-    const memberSession = await extractSessionFromPage(memberPage);
-    expect(memberSession?.accessToken).toBeTruthy();
+      const memberSession = await extractSessionFromPage(memberPage);
+      expect(memberSession?.accessToken).toBeTruthy();
 
-    const sendResponse = await request.post("/api/dm/messages", {
-      headers: {
-        Authorization: `Bearer ${memberSession!.accessToken}`,
-        "Content-Type": "application/json",
-      },
-      data: {
-        receiverId: edaUserId,
-        body: veliOpening,
-      },
-    });
-    expect(sendResponse.ok()).toBeTruthy();
+      const sendResponse = await request.post("/api/dm/messages", {
+        headers: {
+          Authorization: `Bearer ${memberSession!.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          receiverId: edaUserId,
+          body: veliOpening,
+        },
+      });
+      expect(sendResponse.ok()).toBeTruthy();
 
-    await memberPage.goto("/member");
-    await memberPage.getByTestId("member-sidebar-messages").click();
-    const memberDm = memberPage.getByTestId("dm-panel");
-    await expect(memberDm).toBeVisible();
-    await expect(memberDm.getByTestId("dm-conversation-row").filter({ hasText: "Yayıncı Eda" })).toBeVisible({
-      timeout: 20_000,
-    });
-    await memberDm.getByTestId("dm-conversation-row").filter({ hasText: "Yayıncı Eda" }).click();
-    await expect(memberDm.getByTestId("dm-message-list")).toContainText(marker, { timeout: 15_000 });
+      await memberPage.goto("/member");
+      await memberPage.getByTestId("member-sidebar-messages").click();
+      const memberDm = memberPage.getByTestId("dm-panel");
+      await expect(memberDm).toBeVisible();
+      await expect(memberDm.getByTestId("dm-conversation-row").filter({ hasText: "Yayıncı Eda" })).toBeVisible({
+        timeout: 20_000,
+      });
+      await memberDm.getByTestId("dm-conversation-row").filter({ hasText: "Yayıncı Eda" }).click();
+      await expect(memberDm.getByTestId("dm-message-list")).toContainText(marker, { timeout: 15_000 });
 
-    await streamerPage.goto("/streamer");
-    await streamerPage.getByTestId("streamer-sidebar-messages").click();
-    const streamerDm = streamerPage.getByTestId("dm-panel");
-    await expect(streamerDm).toBeVisible();
-    await expect(streamerDm.getByTestId("dm-conversation-row").filter({ hasText: "Üye Veli" })).toBeVisible({
-      timeout: 20_000,
-    });
-    await streamerDm.getByTestId("dm-conversation-row").filter({ hasText: "Üye Veli" }).click();
-    await expect(streamerDm.getByTestId("dm-message-list")).toContainText(marker, { timeout: 15_000 });
+      await streamerPage.goto("/streamer");
+      await streamerPage.getByTestId("streamer-sidebar-messages").click();
+      const streamerDm = streamerPage.getByTestId("dm-panel");
+      await expect(streamerDm).toBeVisible();
+      await expect(streamerDm.getByTestId("dm-conversation-row").filter({ hasText: "Üye Veli" })).toBeVisible({
+        timeout: 20_000,
+      });
+      await streamerDm.getByTestId("dm-conversation-row").filter({ hasText: "Üye Veli" }).click();
+      await expect(streamerDm.getByTestId("dm-message-list")).toContainText(marker, { timeout: 15_000 });
 
-    await streamerDm.getByTestId("dm-message-input").fill(edaReply);
-    await streamerDm.getByTestId("dm-send-button").click();
-    await expect(streamerDm.getByTestId("dm-message-list")).toContainText(edaReply, { timeout: 15_000 });
+      await streamerDm.getByTestId("dm-message-input").fill(edaReply);
+      await streamerDm.getByTestId("dm-send-button").click();
+      await expect(streamerDm.getByTestId("dm-message-list")).toContainText(edaReply, { timeout: 15_000 });
 
-    await expect(memberDm.getByTestId("dm-message-list")).toContainText(edaReply, { timeout: 25_000 });
-  } finally {
-    await streamerContext.close();
-    await memberContext.close();
-  }
+      await expect(memberDm.getByTestId("dm-message-list")).toContainText(edaReply, { timeout: 25_000 });
+    } finally {
+      await streamerContext.close();
+      await memberContext.close();
+    }
+  });
 });
