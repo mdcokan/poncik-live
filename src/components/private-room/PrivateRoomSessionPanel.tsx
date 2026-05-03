@@ -360,18 +360,23 @@ export default function PrivateRoomSessionPanel({
           {!bothReady ? (
             <p className="mt-2 text-sm text-zinc-600">Görüntülü bağlantı için iki tarafın da hazır olması gerekir.</p>
           ) : null}
-          {bothReady ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-zinc-700">Durum:</span>
-              <span
-                data-testid="private-webrtc-state"
-                data-connection-state={webrtc.connectionState}
-                className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-800"
-              >
-                {mapWebRtcConnectionLabel(webrtc.connectionState)}
-              </span>
-            </div>
-          ) : null}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-zinc-700">Durum:</span>
+            <span
+              data-testid="private-webrtc-state"
+              data-connection-state={webrtc.connectionState}
+              data-current-role={currentUserRole}
+              data-session-id={sessionId}
+              data-viewer-ready={viewerReady ? "true" : "false"}
+              data-streamer-ready={streamerReady ? "true" : "false"}
+              data-has-local-stream={localMediaStream ? "true" : "false"}
+              data-has-remote-stream={webrtc.remoteStream ? "true" : "false"}
+              data-signaling-count={String(signalCount)}
+              className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-800"
+            >
+              {mapWebRtcConnectionLabel(webrtc.connectionState)}
+            </span>
+          </div>
           {bothReady ? (
             <div className="mt-2 flex flex-wrap gap-2">
               <span

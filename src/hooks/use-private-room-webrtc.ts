@@ -22,6 +22,8 @@ export type PrivateRoomWebRtcLastSignal = PrivateRoomSignal | null;
 
 type SendSignalFn = (signalType: PrivateRoomSignalType, payload?: Record<string, unknown>) => Promise<void>;
 
+const WEBRTC_NO_START_MESSAGE = "Bağlantı başlatılamadı. Oturum veya izin durumu hazır değil.";
+
 type UsePrivateRoomWebRtcOptions = {
   sessionId: string | null;
   enabled: boolean;
@@ -248,25 +250,32 @@ export function usePrivateRoomWebRtc({
 
   const startConnection = useCallback(async () => {
     if (typeof window === "undefined" || typeof RTCPeerConnection === "undefined") {
+      setErrorMessage("Bağlantı başlatılamadı. WebRTC bu ortamda kullanılamıyor.");
+      setConnectionState("failed");
       return;
     }
     if (startInFlightRef.current) {
       return;
     }
+
+    setErrorMessage(null);
+    setConnectionState("creating");
+
     if (!enabled || !sessionId?.trim()) {
-      setErrorMessage("Özel oda oturumu aktif değil.");
+      setErrorMessage(WEBRTC_NO_START_MESSAGE);
+      setConnectionState("failed");
       return;
     }
 
-    const existing = pcRef.current;
-    if (existing) {
-      const ecs = existing.connectionState;
+    const existingEarly = pcRef.current;
+    if (existingEarly) {
+      const ecs = existingEarly.connectionState;
       if (ecs === "connected" || ecs === "connecting") {
+        syncStatesFromPc(existingEarly);
         return;
       }
     }
 
-    setErrorMessage(null);
     startInFlightRef.current = true;
 
     try {

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { attachPrivateRoomDiagnostics } from "./helpers/private-room-diagnostics";
+import { attachWebRtcDiagnostics } from "./helpers/webrtc-diagnostics";
 import { createPrivateSessionForEdaAndVeli } from "./helpers/private-room-flow";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 
@@ -62,8 +63,17 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
 
     const streamerSessionPanel = streamerPage.getByTestId("private-session-panel");
     const memberSessionPanel = memberPage.getByTestId("private-session-panel");
-    await expect(streamerPage.getByTestId("private-webrtc-panel")).toBeVisible({ timeout: 30_000 });
-    await expect(memberPage.getByTestId("private-webrtc-panel")).toBeVisible({ timeout: 30_000 });
+    const streamerWebrtcPanel = streamerPage.getByTestId("private-webrtc-panel");
+    const memberWebrtcPanel = memberPage.getByTestId("private-webrtc-panel");
+    await expect(streamerWebrtcPanel).toBeVisible({ timeout: 30_000 });
+    await expect(memberWebrtcPanel).toBeVisible({ timeout: 30_000 });
+
+    const streamerWebrtcState = streamerPage.getByTestId("private-webrtc-state");
+    const memberWebrtcState = memberPage.getByTestId("private-webrtc-state");
+    await expect(streamerWebrtcState).toBeAttached({ timeout: 30_000 });
+    await expect(memberWebrtcState).toBeAttached({ timeout: 30_000 });
+    await expect(streamerWebrtcState).toBeVisible({ timeout: 30_000 });
+    await expect(memberWebrtcState).toBeVisible({ timeout: 30_000 });
 
     const studioIceInfo = streamerPage.getByTestId("private-webrtc-ice-info");
     const memberIceInfo = memberPage.getByTestId("private-webrtc-ice-info");
@@ -76,6 +86,11 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
     await streamerPage.getByTestId("private-media-ready-toggle").click();
     await expect(memberPage.getByTestId("private-session-both-ready")).toBeVisible({ timeout: 30_000 });
     await expect(streamerPage.getByTestId("private-session-both-ready")).toBeVisible({ timeout: 30_000 });
+
+    await expect(streamerWebrtcState).toBeAttached();
+    await expect(streamerWebrtcState).toBeVisible();
+    await expect(memberWebrtcState).toBeAttached();
+    await expect(memberWebrtcState).toBeVisible();
 
     await expect(memberPage.getByTestId("private-webrtc-local-status")).toBeVisible({ timeout: 30_000 });
     await expect(memberPage.getByTestId("private-webrtc-remote-status")).toBeVisible({ timeout: 30_000 });
@@ -104,23 +119,26 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
 
     await studioStart.click({ timeout: 30_000 });
 
-    const studioWebrtcState = streamerPage.getByTestId("private-webrtc-state");
     await expect
       .poll(
-        async () => studioWebrtcState.getAttribute("data-connection-state"),
-        { timeout: 90_000, message: "Studio WebRTC state should leave idle after start." },
+        async () => streamerWebrtcState.getAttribute("data-connection-state"),
+        { timeout: 45_000, message: "Studio WebRTC state should leave idle after start." },
       )
       .not.toBe("idle");
 
     await expect
       .poll(async () => {
         const lastText = (await memberSessionPanel.getByTestId("private-signal-last").textContent()) ?? "";
-        const viewerStateAttr = await memberPage.getByTestId("private-webrtc-state").getAttribute("data-connection-state");
+        const viewerStateAttr = await memberWebrtcState.getAttribute("data-connection-state");
         const hasOfferInDebug = /offer/i.test(lastText);
         const viewerActive =
-          viewerStateAttr === "connecting" || viewerStateAttr === "connected" || viewerStateAttr === "failed" || viewerStateAttr === "closed";
+          viewerStateAttr === "creating" ||
+          viewerStateAttr === "connecting" ||
+          viewerStateAttr === "connected" ||
+          viewerStateAttr === "failed" ||
+          viewerStateAttr === "closed";
         return hasOfferInDebug || viewerActive;
-      }, { timeout: 90_000, message: "Viewer should see offer in debug line or non-idle WebRTC state." })
+      }, { timeout: 45_000, message: "Viewer should see offer in debug line or non-idle WebRTC state." })
       .toBe(true);
 
     await expect(streamerSessionPanel.getByTestId("private-signal-last")).toContainText(/answer/i, { timeout: 90_000 });
@@ -136,7 +154,7 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
 
     await streamerPage.getByTestId("private-webrtc-close-button").click();
     await expect
-      .poll(async () => streamerPage.getByTestId("private-webrtc-state").getAttribute("data-connection-state"), {
+      .poll(async () => streamerWebrtcState.getAttribute("data-connection-state"), {
         timeout: 20_000,
       })
       .toMatch(/^(closed|idle)$/);
@@ -144,6 +162,7 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
     reachedEnd = true;
   } finally {
     if (!reachedEnd) {
+      await attachWebRtcDiagnostics(testInfo, memberPage, streamerPage).catch(() => {});
       await attachPrivateRoomDiagnostics(testInfo, { memberPage, streamerPage, request, roomId: roomId || undefined }).catch(() => {});
     }
     if (!streamerPage.isClosed()) {
