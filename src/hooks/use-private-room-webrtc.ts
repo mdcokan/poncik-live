@@ -66,6 +66,7 @@ export function usePrivateRoomWebRtc({
   const processedSignalIdsRef = useRef(new Set<string>());
   const remoteIceQueueRef = useRef<RTCIceCandidateInit[]>([]);
   const startInFlightRef = useRef(false);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
 
   const flushRemoteIceQueue = useCallback(async () => {
     const pc = pcRef.current;
@@ -126,9 +127,19 @@ export function usePrivateRoomWebRtc({
     if (!stream) {
       return;
     }
+    const senderTrackIds = new Set(
+      pc
+        .getSenders()
+        .map((s) => s.track?.id)
+        .filter((id): id is string => Boolean(id)),
+    );
     for (const track of stream.getTracks()) {
+      if (senderTrackIds.has(track.id)) {
+        continue;
+      }
       try {
         pc.addTrack(track, stream);
+        senderTrackIds.add(track.id);
       } catch {
         setErrorMessage((prev) => prev ?? "Yerel medya bağlanamadı.");
       }
@@ -153,6 +164,7 @@ export function usePrivateRoomWebRtc({
     } catch {
       // ignore
     }
+    remoteStreamRef.current = null;
     setRemoteStream((prev) => {
       stopRemoteStreamTracks(prev);
       return null;
@@ -182,14 +194,41 @@ export function usePrivateRoomWebRtc({
     };
 
     pc.ontrack = (event) => {
-      const [first] = event.streams;
-      const next =
-        first ??
-        new MediaStream([event.track]);
-      setRemoteStream((prev) => {
-        stopRemoteStreamTracks(prev);
-        return next;
-      });
+      const [firstFromEvent] = event.streams;
+
+      if (firstFromEvent) {
+        const existing = remoteStreamRef.current;
+        if (!existing || existing.id !== firstFromEvent.id) {
+          if (existing && existing !== firstFromEvent) {
+            stopRemoteStreamTracks(existing);
+          }
+          remoteStreamRef.current = firstFromEvent;
+          setRemoteStream((prev) => (prev === firstFromEvent ? prev : firstFromEvent));
+          return;
+        }
+        if (!existing.getTracks().some((t) => t.id === event.track.id)) {
+          try {
+            existing.addTrack(event.track);
+          } catch {
+            setErrorMessage((prev) => prev ?? "Uzak medya akışı güncellenemedi.");
+          }
+        }
+        return;
+      }
+
+      let working = remoteStreamRef.current;
+      if (!working) {
+        working = new MediaStream();
+        remoteStreamRef.current = working;
+        setRemoteStream(working);
+      }
+      if (!working.getTracks().some((t) => t.id === event.track.id)) {
+        try {
+          working.addTrack(event.track);
+        } catch {
+          setErrorMessage((prev) => prev ?? "Uzak medya akışı güncellenemedi.");
+        }
+      }
     };
 
     pc.onconnectionstatechange = () => {
@@ -285,19 +324,21 @@ export function usePrivateRoomWebRtc({
     if (!pc || !localStream) {
       return;
     }
-    const usedTracks = new Set(
+    const senderTrackIds = new Set(
       pc
         .getSenders()
-        .map((s) => s.track)
-        .filter((t): t is MediaStreamTrack => Boolean(t)),
+        .map((s) => s.track?.id)
+        .filter((id): id is string => Boolean(id)),
     );
     for (const track of localStream.getTracks()) {
-      if (!usedTracks.has(track)) {
-        try {
-          pc.addTrack(track, localStream);
-        } catch {
-          setErrorMessage((p) => p ?? "Yerel medya bağlanamadı.");
-        }
+      if (senderTrackIds.has(track.id)) {
+        continue;
+      }
+      try {
+        pc.addTrack(track, localStream);
+        senderTrackIds.add(track.id);
+      } catch {
+        setErrorMessage((p) => p ?? "Yerel medya bağlanamadı.");
       }
     }
   }, [enabled, localStream, sessionId]);

@@ -62,7 +62,8 @@ test("private room media prep appears on viewer and studio", async ({ browser, r
 
     const memberPrep = memberPage.getByTestId("private-media-prep");
     await expect(memberPrep).toBeVisible({ timeout: 30_000 });
-    await expect(memberPage.locator('[data-testid="private-media-video"], [data-testid="private-media-placeholder"]').first()).toBeVisible();
+    await expect(memberPrep.getByTestId("private-media-placeholder")).toBeVisible();
+    await expect(memberPrep.getByTestId("private-media-video")).toBeAttached();
 
     const readyToggle = memberPage.getByTestId("private-media-ready-toggle");
     await expect(readyToggle).toBeVisible();

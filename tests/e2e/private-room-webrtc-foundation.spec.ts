@@ -70,6 +70,20 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
     await expect(memberPage.getByTestId("private-session-both-ready")).toBeVisible({ timeout: 30_000 });
     await expect(streamerPage.getByTestId("private-session-both-ready")).toBeVisible({ timeout: 30_000 });
 
+    await expect(memberPage.getByTestId("private-webrtc-local-status")).toBeVisible({ timeout: 30_000 });
+    await expect(memberPage.getByTestId("private-webrtc-remote-status")).toBeVisible({ timeout: 30_000 });
+    await expect(streamerPage.getByTestId("private-webrtc-local-status")).toBeVisible({ timeout: 30_000 });
+    await expect(streamerPage.getByTestId("private-webrtc-remote-status")).toBeVisible({ timeout: 30_000 });
+
+    const memberRemoteOrPlaceholder = memberPage.getByTestId("private-webrtc-remote-video").or(
+      memberPage.getByTestId("private-webrtc-remote-placeholder"),
+    );
+    await expect(memberRemoteOrPlaceholder.first()).toBeVisible({ timeout: 10_000 });
+    const streamerRemoteOrPlaceholder = streamerPage.getByTestId("private-webrtc-remote-video").or(
+      streamerPage.getByTestId("private-webrtc-remote-placeholder"),
+    );
+    await expect(streamerRemoteOrPlaceholder.first()).toBeVisible({ timeout: 10_000 });
+
     const studioStart = streamerPage.getByTestId("private-webrtc-start-button");
     if (await studioStart.isDisabled()) {
       const panel = streamerPage.getByTestId("private-session-panel");
@@ -89,7 +103,7 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
         async () => studioWebrtcState.getAttribute("data-connection-state"),
         { timeout: 90_000, message: "Studio WebRTC state should leave idle after start." },
       )
-      .toMatch(/^(creating|connecting|connected|failed|disconnected|closed)$/);
+      .not.toBe("idle");
 
     await expect
       .poll(async () => {
@@ -103,11 +117,6 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
       .toBe(true);
 
     await expect(streamerSessionPanel.getByTestId("private-signal-last")).toContainText(/answer/i, { timeout: 90_000 });
-
-    const remoteOrPlaceholder = memberPage.getByTestId("private-webrtc-remote-video").or(
-      memberPage.getByTestId("private-webrtc-remote-placeholder"),
-    );
-    await expect(remoteOrPlaceholder.first()).toBeVisible({ timeout: 10_000 });
 
     const memberError = memberPage.getByTestId("private-webrtc-error");
     if (await memberError.isVisible().catch(() => false)) {

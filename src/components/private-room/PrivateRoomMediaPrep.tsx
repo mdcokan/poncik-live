@@ -62,17 +62,33 @@ export default function PrivateRoomMediaPrep({
       <p className="mt-1 text-xs text-zinc-600">Özel oda başlamadan önce kameranızı ve mikrofonunuzu kontrol edin.</p>
       <p className="mt-1 text-xs text-zinc-500">{participantName}</p>
 
-      <div className="mt-3 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-950">
-        {stream ? (
-          <video ref={videoRef} muted autoPlay playsInline className="aspect-video w-full object-cover" data-testid="private-media-video" />
-        ) : (
+      <div className="relative mt-3 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-950">
+        <video
+          ref={videoRef}
+          muted
+          autoPlay
+          playsInline
+          className={stream ? "aspect-video w-full object-cover" : "hidden"}
+          data-testid="private-media-video"
+          data-has-stream={stream ? "true" : "false"}
+          data-camera-enabled={stream ? (isCameraEnabled ? "true" : "false") : "false"}
+        />
+        {stream && !isCameraEnabled ? (
+          <div
+            className="absolute inset-0 flex aspect-video w-full items-center justify-center bg-zinc-950/95 px-4 text-center text-xs font-semibold text-zinc-200"
+            data-testid="private-media-camera-off-overlay"
+          >
+            Kamera kapalı
+          </div>
+        ) : null}
+        {!stream ? (
           <div
             className="flex aspect-video w-full items-center justify-center px-4 text-center text-xs font-medium text-zinc-300"
             data-testid="private-media-placeholder"
           >
             Kamera önizlemesi burada görünecek
           </div>
-        )}
+        ) : null}
       </div>
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">

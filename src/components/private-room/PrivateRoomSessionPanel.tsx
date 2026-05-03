@@ -47,6 +47,31 @@ function formatElapsed(seconds: number) {
   return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
 }
 
+function getRemotePlaceholderMessage(connectionState: string) {
+  if (connectionState === "connected") {
+    return "Bağlantı kuruldu, görüntü bekleniyor.";
+  }
+  if (connectionState === "failed" || connectionState === "disconnected") {
+    return "Görüntülü bağlantı kurulamadı. Yeniden deneyebilirsiniz.";
+  }
+  return "Karşı taraf görüntüsü burada görünecek.";
+}
+
+function getLocalWebRtcStatusLabel(stream: MediaStream | null) {
+  if (!stream) {
+    return "Kamera bekleniyor";
+  }
+  const videoTrack = stream.getVideoTracks()[0];
+  if (videoTrack && videoTrack.enabled) {
+    return "Kameranız açık";
+  }
+  return "Kamera bekleniyor";
+}
+
+function getRemoteWebRtcStatusLabel(hasRemoteStream: boolean) {
+  return hasRemoteStream ? "Karşı taraf görüntüsü bağlı" : "Karşı taraf bekleniyor";
+}
+
 function mapWebRtcConnectionLabel(state: string) {
   switch (state) {
     case "idle":
@@ -151,6 +176,12 @@ export default function PrivateRoomSessionPanel({
     sendSignal: onSendSignal ?? (async () => {}),
     lastSignal,
   });
+
+  const localWebRtcStatusLabel = useMemo(() => getLocalWebRtcStatusLabel(localMediaStream), [localMediaStream]);
+  const remoteWebRtcStatusLabel = useMemo(
+    () => getRemoteWebRtcStatusLabel(Boolean(webrtc.remoteStream)),
+    [webrtc.remoteStream],
+  );
 
   useEffect(() => {
     const el = remoteVideoRef.current;
@@ -324,6 +355,22 @@ export default function PrivateRoomSessionPanel({
               </span>
             </div>
           ) : null}
+          {bothReady ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <span
+                data-testid="private-webrtc-local-status"
+                className="rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-900 ring-1 ring-violet-100"
+              >
+                {localWebRtcStatusLabel}
+              </span>
+              <span
+                data-testid="private-webrtc-remote-status"
+                className="rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-900 ring-1 ring-sky-100"
+              >
+                {remoteWebRtcStatusLabel}
+              </span>
+            </div>
+          ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
@@ -364,13 +411,15 @@ export default function PrivateRoomSessionPanel({
                 playsInline
                 className="aspect-video w-full object-cover"
                 data-testid="private-webrtc-remote-video"
+                data-has-remote-stream="true"
               />
             ) : (
               <div
-                className="flex aspect-video w-full items-center justify-center px-4 text-center text-xs font-medium text-zinc-400"
+                className="flex aspect-video w-full flex-col items-center justify-center gap-1 px-4 text-center text-xs font-medium text-zinc-400"
                 data-testid="private-webrtc-remote-placeholder"
+                data-has-remote-stream="false"
               >
-                Karşı taraf görüntüsü burada görünecek.
+                {getRemotePlaceholderMessage(webrtc.connectionState)}
               </div>
             )}
           </div>
