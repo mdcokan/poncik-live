@@ -16,6 +16,51 @@ export type PrivateRoomSignal = {
   readAt: string | null;
 };
 
+export function parseWebRtcSessionDescription(payload: Record<string, unknown>): RTCSessionDescriptionInit | null {
+  const sdp = typeof payload.sdp === "string" ? payload.sdp : null;
+  const typeRaw = typeof payload.type === "string" ? payload.type : null;
+  if (!sdp?.trim() || !typeRaw) {
+    return null;
+  }
+  if (typeRaw !== "offer" && typeRaw !== "answer" && typeRaw !== "pranswer" && typeRaw !== "rollback") {
+    return null;
+  }
+  return { type: typeRaw as RTCSdpType, sdp };
+}
+
+export function parseWebRtcIceCandidate(payload: Record<string, unknown>): RTCIceCandidateInit | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const init: RTCIceCandidateInit = {};
+  if ("candidate" in payload) {
+    const c = payload.candidate;
+    if (c !== null && typeof c !== "string") {
+      return null;
+    }
+    if (typeof c === "string") {
+      init.candidate = c;
+    }
+  }
+  if (typeof payload.sdpMid === "string") {
+    init.sdpMid = payload.sdpMid;
+  } else if (payload.sdpMid === null) {
+    init.sdpMid = null;
+  }
+  if (typeof payload.sdpMLineIndex === "number") {
+    init.sdpMLineIndex = payload.sdpMLineIndex;
+  } else if (payload.sdpMLineIndex === null) {
+    init.sdpMLineIndex = null;
+  }
+  if (typeof payload.usernameFragment === "string") {
+    init.usernameFragment = payload.usernameFragment;
+  }
+  if (Object.keys(init).length === 0) {
+    return null;
+  }
+  return init;
+}
+
 type UsePrivateRoomSignalingOptions = {
   sessionId: string;
   enabled: boolean;

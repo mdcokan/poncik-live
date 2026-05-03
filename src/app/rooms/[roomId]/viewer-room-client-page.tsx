@@ -1563,7 +1563,9 @@ export default function ViewerRoomClientPage() {
               resultText={privateSessionResult ?? undefined}
               errorText={privateSessionError ?? undefined}
               onSendSignal={privateRoomSignaling.sendSignal}
+              lastSignal={privateRoomSignaling.lastSignal}
               lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
+              currentUserId={state.userId}
             />
           ) : null}
           {!activePrivateSession && privateSessionResult ? (

@@ -8,6 +8,7 @@ type PrivateRoomMediaPrepProps = {
   participantName: string;
   initialReady?: boolean;
   onReadyChange?: (ready: boolean) => void | Promise<void>;
+  onStreamChange?: (stream: MediaStream | null) => void;
 };
 
 export default function PrivateRoomMediaPrep({
@@ -15,6 +16,7 @@ export default function PrivateRoomMediaPrep({
   participantName,
   initialReady = false,
   onReadyChange,
+  onStreamChange,
 }: PrivateRoomMediaPrepProps) {
   const {
     isSupported,
@@ -48,6 +50,10 @@ export default function PrivateRoomMediaPrep({
   useEffect(() => {
     setIsReady(initialReady);
   }, [initialReady]);
+
+  useEffect(() => {
+    onStreamChange?.(stream ?? null);
+  }, [stream, onStreamChange]);
 
   return (
     <section className="rounded-2xl border border-violet-200 bg-white p-4 shadow-sm" data-testid="private-media-prep">

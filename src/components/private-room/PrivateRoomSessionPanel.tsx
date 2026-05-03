@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PrivateRoomMediaPrep from "@/components/private-room/PrivateRoomMediaPrep";
-import type { PrivateRoomSignalType } from "@/hooks/use-private-room-signaling";
+import type { PrivateRoomSignal, PrivateRoomSignalType } from "@/hooks/use-private-room-signaling";
+import { usePrivateRoomWebRtc } from "@/hooks/use-private-room-webrtc";
 
 type PrivateRoomSessionPanelProps = {
   sessionId: string;
@@ -25,6 +26,10 @@ type PrivateRoomSessionPanelProps = {
   autoEndReason?: string;
   onSendSignal?: (signalType: PrivateRoomSignalType, payload?: Record<string, unknown>) => Promise<void>;
   lastSignalLabel?: string | null;
+  /** Latest signaling row for WebRTC exchange (optional). Debug label can fall back to `lastSignal?.signalType`. */
+  lastSignal?: PrivateRoomSignal | null;
+  enableWebRtc?: boolean;
+  currentUserId?: string | null;
 };
 
 function getInitial(name: string) {
@@ -40,6 +45,27 @@ function formatElapsed(seconds: number) {
   const minutes = Math.floor(safeSeconds / 60);
   const remaining = safeSeconds % 60;
   return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
+}
+
+function mapWebRtcConnectionLabel(state: string) {
+  switch (state) {
+    case "idle":
+      return "Hazırlanıyor";
+    case "creating":
+      return "Hazırlanıyor";
+    case "connecting":
+      return "Bağlanıyor";
+    case "connected":
+      return "Bağlandı";
+    case "disconnected":
+      return "Bağlantı kesildi";
+    case "failed":
+      return "Hata";
+    case "closed":
+      return "Bağlantı kapalı";
+    default:
+      return state;
+  }
 }
 
 function PlaceholderCard({ title, name }: { title: string; name: string }) {
@@ -80,9 +106,14 @@ export default function PrivateRoomSessionPanel({
   autoEndReason = "Süre bittiği için özel oda kapatılıyor...",
   onSendSignal,
   lastSignalLabel = null,
+  lastSignal = null,
+  enableWebRtc = true,
+  currentUserId = null,
 }: PrivateRoomSessionPanelProps) {
   const displayStreamerName = (streamerName ?? "").trim() || "Yayıncı";
   const displayViewerName = (viewerName ?? "").trim() || "Üye";
+  const [localMediaStream, setLocalMediaStream] = useState<MediaStream | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isAutoEnding, setIsAutoEnding] = useState(false);
   const [localReady, setLocalReady] = useState(currentUserRole === "viewer" ? viewerReady : streamerReady);
@@ -103,6 +134,34 @@ export default function PrivateRoomSessionPanel({
     estimatedRemainingMinutes <= lowBalanceThresholdMinutes;
   const remoteReady = currentUserRole === "viewer" ? streamerReady : viewerReady;
   const bothReady = viewerReady && streamerReady;
+
+  const handleLocalStreamChange = useCallback((stream: MediaStream | null) => {
+    setLocalMediaStream(stream);
+  }, []);
+
+  const signalingDebugLabel = lastSignalLabel ?? lastSignal?.signalType ?? null;
+
+  const webrtc = usePrivateRoomWebRtc({
+    sessionId,
+    enabled: Boolean(enableWebRtc && bothReady && onSendSignal && currentUserId),
+    currentUserRole,
+    currentUserId,
+    localStream: localMediaStream,
+    sendSignal: onSendSignal ?? (async () => {}),
+    lastSignal,
+  });
+
+  useEffect(() => {
+    const el = remoteVideoRef.current;
+    if (!el) {
+      return;
+    }
+    el.srcObject = webrtc.remoteStream;
+  }, [webrtc.remoteStream]);
+
+  useEffect(() => {
+    setLocalMediaStream(null);
+  }, [sessionId]);
 
   useEffect(() => {
     setLocalReady(currentUserRole === "viewer" ? viewerReady : streamerReady);
@@ -160,7 +219,7 @@ export default function PrivateRoomSessionPanel({
       data-session-id={sessionId}
     >
       <h2 className="text-lg font-black text-violet-900">Özel Oda Aktif</h2>
-      <p className="mt-1 text-sm text-violet-800">Bu fazda kamera altyapısı hazırlık ekranı olarak gösteriliyor.</p>
+      <p className="mt-1 text-sm text-violet-800">Kamera hazırlığı ve görüntülü bağlantı (WebRTC) bu panelden yönetilir.</p>
 
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {currentUserRole === "streamer" ? (
@@ -168,6 +227,7 @@ export default function PrivateRoomSessionPanel({
             <PrivateRoomMediaPrep
               roleLabel="Yayıncı"
               participantName={`Yayıncı ${displayStreamerName}`}
+              onStreamChange={handleLocalStreamChange}
               initialReady={localReady}
               onReadyChange={async (ready) => {
                 setLocalReadyError(null);
@@ -195,6 +255,7 @@ export default function PrivateRoomSessionPanel({
             <PrivateRoomMediaPrep
               roleLabel="Üye"
               participantName={`Üye ${displayViewerName}`}
+              onStreamChange={handleLocalStreamChange}
               initialReady={localReady}
               onReadyChange={async (ready) => {
                 setLocalReadyError(null);
@@ -233,9 +294,87 @@ export default function PrivateRoomSessionPanel({
       </div>
       {bothReady ? (
         <p className="mt-2 text-xs font-semibold text-emerald-700" data-testid="private-session-both-ready">
-          İki taraf da hazır. Kamera bağlantısı sonraki fazda başlatılacak.
+          İki taraf da hazır. Görüntülü bağlantıyı aşağıdan başlatabilirsiniz.
         </p>
       ) : null}
+
+      {enableWebRtc && onSendSignal ? (
+        <div
+          className="mt-4 rounded-xl border border-emerald-100 bg-white/90 p-4 shadow-sm"
+          data-testid="private-webrtc-panel"
+        >
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-700">Görüntülü bağlantı</p>
+          {!bothReady ? (
+            <p className="mt-2 text-sm text-zinc-600">Görüntülü bağlantı için iki tarafın da hazır olması gerekir.</p>
+          ) : (
+            <>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold text-zinc-700">Durum:</span>
+                <span
+                  data-testid="private-webrtc-state"
+                  data-connection-state={webrtc.connectionState}
+                  className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-800"
+                >
+                  {mapWebRtcConnectionLabel(webrtc.connectionState)}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  data-testid="private-webrtc-start-button"
+                  disabled={
+                    !bothReady ||
+                    webrtc.connectionState === "creating" ||
+                    webrtc.connectionState === "connecting" ||
+                    webrtc.connectionState === "connected"
+                  }
+                  className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                  onClick={() => {
+                    void webrtc.startConnection();
+                  }}
+                >
+                  Bağlantıyı Başlat
+                </button>
+                <button
+                  type="button"
+                  data-testid="private-webrtc-close-button"
+                  disabled={webrtc.connectionState === "idle" || webrtc.connectionState === "closed"}
+                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => {
+                    webrtc.closeConnection();
+                  }}
+                >
+                  Bağlantıyı Kapat
+                </button>
+              </div>
+            </>
+          )}
+          <div className="mt-4 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-950">
+            {webrtc.remoteStream ? (
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                className="aspect-video w-full object-cover"
+                data-testid="private-webrtc-remote-video"
+              />
+            ) : (
+              <div
+                className="flex aspect-video w-full items-center justify-center px-4 text-center text-xs font-medium text-zinc-400"
+                data-testid="private-webrtc-remote-placeholder"
+              >
+                Karşı taraf görüntüsü burada görünecek.
+              </div>
+            )}
+          </div>
+          {webrtc.errorMessage ? (
+            <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-webrtc-error">
+              {webrtc.errorMessage}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {onSendSignal ? (
         <div
           className="mt-3 rounded-xl border border-violet-100 bg-white/80 p-3 text-zinc-600"
@@ -276,7 +415,7 @@ export default function PrivateRoomSessionPanel({
             </button>
           </div>
           <p className="mt-2 text-[11px] text-zinc-500" data-testid="private-signal-last">
-            Son sinyal: {lastSignalLabel ?? "—"}
+            Son sinyal: {signalingDebugLabel ?? "—"}
           </p>
         </div>
       ) : null}

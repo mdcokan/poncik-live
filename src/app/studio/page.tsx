@@ -1796,7 +1796,9 @@ export default function StudioPage() {
                     resultText={privateSessionResult ?? undefined}
                     errorText={privateSessionError ?? undefined}
                     onSendSignal={privateRoomSignaling.sendSignal}
+                    lastSignal={privateRoomSignaling.lastSignal}
                     lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
+                    currentUserId={ownerId}
                   />
                 ) : null}
                 {!activePrivateSession && privateSessionResult ? (
