@@ -191,6 +191,16 @@ export async function POST(request: Request, context: { params: Promise<{ sessio
     return noStoreJson({ ok: false, code: "UNKNOWN_ERROR", message: "Sinyal gönderilemedi." }, { status: 500 });
   }
 
+  const { data: fullRow, error: rowFetchError } = await supabase
+    .from("private_room_signals")
+    .select("id, session_id, sender_id, receiver_id, signal_type, payload, created_at, read_at")
+    .eq("id", row.id)
+    .maybeSingle();
+
+  if (!rowFetchError && fullRow) {
+    return noStoreJson({ ok: true, signal: mapSignalToClient(fullRow as DbSignalRow) });
+  }
+
   return noStoreJson({
     ok: true,
     signal: {
@@ -199,7 +209,9 @@ export async function POST(request: Request, context: { params: Promise<{ sessio
       senderId: row.sender_id,
       receiverId: row.receiver_id,
       signalType: row.signal_type,
+      payload,
       createdAt: row.created_at,
+      readAt: null,
     },
   });
 }

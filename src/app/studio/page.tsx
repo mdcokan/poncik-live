@@ -1798,6 +1798,9 @@ export default function StudioPage() {
                     onSendSignal={privateRoomSignaling.sendSignal}
                     lastSignal={privateRoomSignaling.lastSignal}
                     lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
+                    signalCount={privateRoomSignaling.signalCount}
+                    lastSignalAt={privateRoomSignaling.lastSignalAt}
+                    signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
                     currentUserId={ownerId}
                   />
                 ) : null}

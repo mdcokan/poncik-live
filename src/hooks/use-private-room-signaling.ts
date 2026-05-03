@@ -98,129 +98,175 @@ function normalizeSignal(row: ApiSignalClient): PrivateRoomSignal | null {
   };
 }
 
+const MAX_SIGNALS = 50;
+
+/** Dedupe by id, chronological order, keep the newest 50; last entry is the newest signal. */
+function mergePrivateRoomSignals(prev: PrivateRoomSignal[], incoming: PrivateRoomSignal[]): PrivateRoomSignal[] {
+  const byId = new Map<string, PrivateRoomSignal>();
+  for (const s of prev) {
+    byId.set(s.id, s);
+  }
+  for (const s of incoming) {
+    byId.set(s.id, s);
+  }
+  const merged = Array.from(byId.values()).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  return merged.slice(-MAX_SIGNALS);
+}
+
 export function usePrivateRoomSignaling({ sessionId, enabled }: UsePrivateRoomSignalingOptions) {
   const [signals, setSignals] = useState<PrivateRoomSignal[]>([]);
   const [lastSignal, setLastSignal] = useState<PrivateRoomSignal | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const seenIdsRef = useRef(new Set<string>());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshError, setLastRefreshError] = useState<string | null>(null);
+  const [lastSendError, setLastSendError] = useState<string | null>(null);
 
-  const mergeIncoming = useCallback((row: PrivateRoomSignal) => {
-    if (seenIdsRef.current.has(row.id)) {
-      setLastSignal(row);
-      return;
-    }
-    seenIdsRef.current.add(row.id);
-    setSignals((prev) => {
-      const next = [...prev, row].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      return next.slice(-100);
-    });
-    setLastSignal(row);
+  const signalsRef = useRef<PrivateRoomSignal[]>([]);
+  signalsRef.current = signals;
+
+  const applyMergedSignals = useCallback((merged: PrivateRoomSignal[]) => {
+    setSignals(merged);
+    setLastSignal(merged.length ? merged[merged.length - 1]! : null);
   }, []);
+
+  const addSignals = useCallback(
+    (incoming: PrivateRoomSignal[]) => {
+      if (!incoming.length) {
+        return;
+      }
+      const merged = mergePrivateRoomSignals(signalsRef.current, incoming);
+      applyMergedSignals(merged);
+    },
+    [applyMergedSignals],
+  );
 
   const refreshSignals = useCallback(async () => {
     if (!sessionId.trim() || !enabled) {
       return;
     }
-    setError(null);
+    setLastRefreshError(null);
+    setIsRefreshing(true);
     const supabase = getSupabaseBrowserClient();
     const {
       data: { session },
     } = await supabase.auth.getSession();
     const accessToken = session?.access_token;
     if (!accessToken) {
-      setError("Giriş doğrulaması yapılamadı.");
+      setLastRefreshError("Giriş doğrulaması yapılamadı.");
+      setIsRefreshing(false);
       return;
     }
 
-    const response = await fetch(`/api/private-sessions/${encodeURIComponent(sessionId)}/signals`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: "no-store",
-    });
-    const payload = (await response.json().catch(() => ({}))) as {
-      ok?: boolean;
-      signals?: ApiSignalClient[];
-      message?: string;
-    };
-    if (!response.ok || !payload.ok || !Array.isArray(payload.signals)) {
-      setError(payload.message || "Sinyaller alınamadı.");
-      return;
-    }
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    const userId = user?.id;
-    if (!userId) {
-      setError("Giriş doğrulaması yapılamadı.");
-      return;
-    }
-
-    const normalized: PrivateRoomSignal[] = [];
-    for (const raw of payload.signals) {
-      if (!isParticipantSignal(raw, userId)) {
-        continue;
+    try {
+      const response = await fetch(`/api/private-sessions/${encodeURIComponent(sessionId)}/signals`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        signals?: ApiSignalClient[];
+        message?: string;
+      };
+      if (!response.ok || !payload.ok || !Array.isArray(payload.signals)) {
+        setLastRefreshError(payload.message || "Sinyaller alınamadı.");
+        return;
       }
-      const n = normalizeSignal(raw);
-      if (n) {
-        normalized.push(n);
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const userId = user?.id;
+      if (!userId) {
+        setLastRefreshError("Giriş doğrulaması yapılamadı.");
+        return;
       }
+
+      const normalized: PrivateRoomSignal[] = [];
+      for (const raw of payload.signals) {
+        if (!isParticipantSignal(raw, userId)) {
+          continue;
+        }
+        const n = normalizeSignal(raw);
+        if (n) {
+          normalized.push(n);
+        }
+      }
+      normalized.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+      const merged = mergePrivateRoomSignals(signalsRef.current, normalized);
+      applyMergedSignals(merged);
+    } catch {
+      setLastRefreshError("Sinyaller alınamadı.");
+    } finally {
+      setIsRefreshing(false);
     }
-    normalized.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    seenIdsRef.current = new Set(normalized.map((s) => s.id));
-    setSignals(normalized);
-    setLastSignal(normalized.length ? normalized[normalized.length - 1] : null);
-  }, [enabled, sessionId]);
+  }, [applyMergedSignals, enabled, sessionId]);
 
   const sendSignal = useCallback(
     async (signalType: PrivateRoomSignalType, payload: Record<string, unknown> = {}) => {
       if (!sessionId.trim()) {
+        setLastSendError("Özel oda oturumu bulunamadı.");
         throw new Error("SESSION_NOT_FOUND");
       }
-      setError(null);
+      setLastSendError(null);
       const supabase = getSupabaseBrowserClient();
       const {
         data: { session },
       } = await supabase.auth.getSession();
       const accessToken = session?.access_token;
       if (!accessToken) {
-        setError("Giriş doğrulaması yapılamadı.");
+        setLastSendError("Giriş doğrulaması yapılamadı.");
         throw new Error("AUTH_REQUIRED");
       }
 
-      const response = await fetch(`/api/private-sessions/${encodeURIComponent(sessionId)}/signals`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ signalType, payload }),
-        cache: "no-store",
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        signal?: ApiSignalClient;
-        message?: string;
-        code?: string;
-      };
-      if (!response.ok || !body.ok || !body.signal) {
-        setError(body.message || "Sinyal gönderilemedi.");
-        throw new Error(body.code || "SEND_FAILED");
-      }
-      const normalized = normalizeSignal({ ...body.signal, payload: body.signal.payload ?? payload });
-      if (normalized) {
-        mergeIncoming(normalized);
+      let rejectedByApi = false;
+      try {
+        const response = await fetch(`/api/private-sessions/${encodeURIComponent(sessionId)}/signals`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ signalType, payload }),
+          cache: "no-store",
+        });
+        const body = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          signal?: ApiSignalClient;
+          message?: string;
+          code?: string;
+        };
+        if (!response.ok || !body.ok || !body.signal) {
+          rejectedByApi = true;
+          const msg = body.message || "Sinyal gönderilemedi.";
+          setLastSendError(msg);
+          throw new Error(body.code || "SEND_FAILED");
+        }
+        const normalized = normalizeSignal({
+          ...body.signal,
+          payload: body.signal.payload ?? payload,
+        });
+        if (normalized) {
+          addSignals([normalized]);
+        }
+      } catch (err) {
+        if (!rejectedByApi && err instanceof Error) {
+          setLastSendError(err.message || "Sinyal gönderilemedi.");
+        }
+        throw err;
       }
     },
-    [mergeIncoming, sessionId],
+    [addSignals, sessionId],
   );
 
   useEffect(() => {
     if (!enabled || !sessionId.trim()) {
-      seenIdsRef.current = new Set();
+      signalsRef.current = [];
       setSignals([]);
       setLastSignal(null);
-      setError(null);
+      setLastRefreshError(null);
+      setLastSendError(null);
+      setIsRefreshing(false);
       return;
     }
 
@@ -279,7 +325,7 @@ export function usePrivateRoomSignaling({ sessionId, enabled }: UsePrivateRoomSi
           };
           const normalized = normalizeSignal(raw);
           if (normalized) {
-            mergeIncoming(normalized);
+            addSignals([normalized]);
           }
         },
       )
@@ -293,12 +339,19 @@ export function usePrivateRoomSignaling({ sessionId, enabled }: UsePrivateRoomSi
       cancelled = true;
       void supabase.removeChannel(channel);
     };
-  }, [enabled, mergeIncoming, refreshSignals, sessionId]);
+  }, [addSignals, enabled, refreshSignals, sessionId]);
+
+  const signalCount = signals.length;
+  const lastSignalAt = lastSignal?.createdAt ?? null;
 
   return {
     signals,
     lastSignal,
-    error,
+    signalCount,
+    lastSignalAt,
+    isRefreshing,
+    lastRefreshError,
+    lastSendError,
     sendSignal,
     refreshSignals,
   };

@@ -1,7 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { gotoDomWithRetry } from "./helpers/navigation";
-import { attachPrivateRoomDiagnostics } from "./helpers/private-room-diagnostics";
+import { attachPrivateRoomDiagnostics, extractSupabaseAccessToken } from "./helpers/private-room-diagnostics";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 import { ensureStreamerLive } from "./helpers/studio";
 
@@ -19,6 +19,73 @@ async function getWalletBalance(page: Page) {
   return parseBalance(text);
 }
 
+async function attachSignalingExpectFailure(
+  testInfo: TestInfo,
+  label: string,
+  opts: {
+    memberPage: Page;
+    streamerPage: Page;
+    request: APIRequestContext;
+    sessionId: string | null;
+    receiverTokenPage: Page;
+  },
+) {
+  const memberLast = await opts.memberPage.getByTestId("private-signal-last").textContent().catch(() => "");
+  const studioLast = await opts.streamerPage.getByTestId("private-signal-last").textContent().catch(() => "");
+  const memberCount = await opts.memberPage.getByTestId("private-signal-count").textContent().catch(() => "");
+  const studioCount = await opts.streamerPage.getByTestId("private-signal-count").textContent().catch(() => "");
+  const token = await extractSupabaseAccessToken(opts.receiverTokenPage);
+  let getSnapshot = "no_token";
+  if (opts.sessionId && token) {
+    const res = await opts.request.get(`/api/private-sessions/${encodeURIComponent(opts.sessionId)}/signals`, {
+      headers: { Authorization: `Bearer ${token}` },
+      failOnStatusCode: false,
+    });
+    const body = await res.json().catch(() => null);
+    getSnapshot = JSON.stringify({ httpStatus: res.status(), body });
+  }
+  const body = [
+    `label=${label}`,
+    `memberUrl=${opts.memberPage.url()}`,
+    `studioUrl=${opts.streamerPage.url()}`,
+    `sessionId=${opts.sessionId ?? ""}`,
+    `member private-signal-last=${JSON.stringify(memberLast)}`,
+    `studio private-signal-last=${JSON.stringify(studioLast)}`,
+    `member private-signal-count=${JSON.stringify(memberCount)}`,
+    `studio private-signal-count=${JSON.stringify(studioCount)}`,
+    `GET /signals (receiver token)=${getSnapshot}`,
+  ].join("\n");
+  await testInfo.attach(`signaling-expect-failure-${label}.txt`, { body, contentType: "text/plain" });
+}
+
+async function expectReceiverLastSignal(
+  testInfo: TestInfo,
+  opts: {
+    receiverPanel: Locator;
+    receiverPage: Page;
+    memberPage: Page;
+    streamerPage: Page;
+    request: APIRequestContext;
+    sessionId: string | null;
+    pattern: RegExp;
+    stepLabel: string;
+  },
+) {
+  try {
+    await expect(opts.receiverPanel.getByTestId("private-signal-last")).toContainText(opts.pattern, { timeout: 35_000 });
+    await expect(opts.receiverPanel.getByTestId("private-signal-count")).toContainText(/[1-9]/);
+  } catch {
+    await attachSignalingExpectFailure(testInfo, opts.stepLabel, {
+      memberPage: opts.memberPage,
+      streamerPage: opts.streamerPage,
+      request: opts.request,
+      sessionId: opts.sessionId,
+      receiverTokenPage: opts.receiverPage,
+    });
+    throw new Error(`Receiver UI did not match ${opts.stepLabel} (see signaling-expect-failure-${opts.stepLabel}.txt)`);
+  }
+}
+
 test.describe.configure({ mode: "serial" });
 
 test("private room signaling relays ready_ping, offer, and answer", async ({ browser, request }, testInfo) => {
@@ -32,6 +99,7 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
 
   let roomId = "";
   let reachedEnd = false;
+  let sessionId: string | null = null;
 
   try {
     await loginWithStabilizedAuth(
@@ -92,14 +160,52 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
     await expect(streamerSessionPanel.getByTestId("private-signaling-panel")).toBeVisible({ timeout: 30_000 });
     await expect(memberSessionPanel.getByTestId("private-signaling-panel")).toBeVisible({ timeout: 30_000 });
 
+    sessionId = await memberSessionPanel.getAttribute("data-session-id");
+
     await memberSessionPanel.getByTestId("private-signal-ready-ping").click({ timeout: 30_000 });
-    await expect(streamerSessionPanel.getByTestId("private-signal-last")).toContainText(/ready_ping/i, { timeout: 30_000 });
+    await expect(memberSessionPanel.getByTestId("private-signal-last")).toContainText(/ready_ping/i, { timeout: 15_000 });
+    await expect(memberSessionPanel.getByTestId("private-signal-count")).toContainText(/[1-9]/);
+
+    await expectReceiverLastSignal(testInfo, {
+      receiverPanel: streamerSessionPanel,
+      receiverPage: streamerPage,
+      memberPage,
+      streamerPage,
+      request,
+      sessionId,
+      pattern: /ready_ping/i,
+      stepLabel: "ready_ping_receiver",
+    });
 
     await streamerSessionPanel.getByTestId("private-signal-offer").click({ timeout: 30_000 });
-    await expect(memberSessionPanel.getByTestId("private-signal-last")).toContainText(/offer/i, { timeout: 30_000 });
+    await expect(streamerSessionPanel.getByTestId("private-signal-last")).toContainText(/offer/i, { timeout: 15_000 });
+    await expect(streamerSessionPanel.getByTestId("private-signal-count")).toContainText(/[1-9]/);
+
+    await expectReceiverLastSignal(testInfo, {
+      receiverPanel: memberSessionPanel,
+      receiverPage: memberPage,
+      memberPage,
+      streamerPage,
+      request,
+      sessionId,
+      pattern: /offer/i,
+      stepLabel: "offer_receiver",
+    });
 
     await memberSessionPanel.getByTestId("private-signal-answer").click({ timeout: 30_000 });
-    await expect(streamerSessionPanel.getByTestId("private-signal-last")).toContainText(/answer/i, { timeout: 30_000 });
+    await expect(memberSessionPanel.getByTestId("private-signal-last")).toContainText(/answer/i, { timeout: 15_000 });
+    await expect(memberSessionPanel.getByTestId("private-signal-count")).toContainText(/[1-9]/);
+
+    await expectReceiverLastSignal(testInfo, {
+      receiverPanel: streamerSessionPanel,
+      receiverPage: streamerPage,
+      memberPage,
+      streamerPage,
+      request,
+      sessionId,
+      pattern: /answer/i,
+      stepLabel: "answer_receiver",
+    });
 
     reachedEnd = true;
   } finally {

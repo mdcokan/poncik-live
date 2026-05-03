@@ -28,6 +28,9 @@ type PrivateRoomSessionPanelProps = {
   lastSignalLabel?: string | null;
   /** Latest signaling row for WebRTC exchange (optional). Debug label can fall back to `lastSignal?.signalType`. */
   lastSignal?: PrivateRoomSignal | null;
+  signalCount?: number;
+  lastSignalAt?: string | null;
+  signalingErrorText?: string | null;
   enableWebRtc?: boolean;
   currentUserId?: string | null;
 };
@@ -70,6 +73,17 @@ function getLocalWebRtcStatusLabel(stream: MediaStream | null) {
 
 function getRemoteWebRtcStatusLabel(hasRemoteStream: boolean) {
   return hasRemoteStream ? "Karşı taraf görüntüsü bağlı" : "Karşı taraf bekleniyor";
+}
+
+function formatLastSignalClock(iso: string | null | undefined) {
+  if (!iso) {
+    return "—";
+  }
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) {
+    return "—";
+  }
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
 function mapWebRtcConnectionLabel(state: string) {
@@ -132,6 +146,9 @@ export default function PrivateRoomSessionPanel({
   onSendSignal,
   lastSignalLabel = null,
   lastSignal = null,
+  signalCount = 0,
+  lastSignalAt = null,
+  signalingErrorText = null,
   enableWebRtc = true,
   currentUserId = null,
 }: PrivateRoomSessionPanelProps) {
@@ -479,6 +496,17 @@ export default function PrivateRoomSessionPanel({
           <p className="mt-2 text-[11px] text-zinc-500" data-testid="private-signal-last">
             Son sinyal: {signalingDebugLabel ?? "—"}
           </p>
+          <p className="mt-1 text-[11px] text-zinc-500" data-testid="private-signal-count">
+            Sinyal sayısı: {signalCount}
+          </p>
+          <p className="mt-1 text-[11px] text-zinc-500" data-testid="private-signal-last-at">
+            Son sinyal zamanı: {formatLastSignalClock(lastSignalAt)}
+          </p>
+          {signalingErrorText ? (
+            <p className="mt-1 text-[11px] font-medium text-amber-800" data-testid="private-signal-error">
+              {signalingErrorText}
+            </p>
+          ) : null}
         </div>
       ) : null}
       {isReadyUpdating ? <p className="mt-2 text-xs text-zinc-600">Hazır durumu güncelleniyor...</p> : null}
