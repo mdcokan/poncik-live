@@ -400,8 +400,14 @@ export default function PrivateRoomSessionPanel({
               Bağlantıyı Kapat
             </button>
           </div>
-          <p className="mt-2 text-xs text-zinc-500">
-            Bazı ağlarda görüntülü bağlantı kurulamayabilir; bu durumda yeniden deneyebilirsiniz.
+          <p
+            className="mt-2 text-xs text-zinc-500"
+            data-testid="private-webrtc-ice-info"
+            data-has-turn={webrtc.hasTurnServer ? "true" : "false"}
+          >
+            {webrtc.hasTurnServer
+              ? "Bağlantı sunucuları yapılandırıldı. Görüntülü bağlantı daha kararlı çalışabilir."
+              : "Bazı ağlarda görüntülü bağlantı kurulamayabilir. TURN sunucusu yapılandırıldığında bağlantı kalitesi artar."}
           </p>
           <div className="mt-4 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-950">
             {webrtc.remoteStream ? (

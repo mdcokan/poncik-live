@@ -65,6 +65,13 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
     await expect(streamerPage.getByTestId("private-webrtc-panel")).toBeVisible({ timeout: 30_000 });
     await expect(memberPage.getByTestId("private-webrtc-panel")).toBeVisible({ timeout: 30_000 });
 
+    const studioIceInfo = streamerPage.getByTestId("private-webrtc-ice-info");
+    const memberIceInfo = memberPage.getByTestId("private-webrtc-ice-info");
+    await expect(studioIceInfo).toBeVisible({ timeout: 30_000 });
+    await expect(memberIceInfo).toBeVisible({ timeout: 30_000 });
+    await expect(studioIceInfo).toContainText(/Bazı ağlarda görüntülü bağlantı kurulamayabilir/i);
+    await expect(memberIceInfo).toContainText(/Bazı ağlarda görüntülü bağlantı kurulamayabilir/i);
+
     await memberPage.getByTestId("private-media-ready-toggle").click();
     await streamerPage.getByTestId("private-media-ready-toggle").click();
     await expect(memberPage.getByTestId("private-session-both-ready")).toBeVisible({ timeout: 30_000 });

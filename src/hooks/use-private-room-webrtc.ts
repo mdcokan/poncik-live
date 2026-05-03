@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type PrivateRoomSignal,
   type PrivateRoomSignalType,
   parseWebRtcIceCandidate,
   parseWebRtcSessionDescription,
 } from "@/hooks/use-private-room-signaling";
+import { getRtcIceServers, hasTurnServer as iceConfigHasTurn } from "@/lib/rtc/ice-servers";
 
 export type PrivateRoomWebRtcConnectionState =
   | "idle"
@@ -32,10 +33,6 @@ type UsePrivateRoomWebRtcOptions = {
   lastSignal: PrivateRoomWebRtcLastSignal;
 };
 
-const PeerConfig: RTCConfiguration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-};
-
 function stopRemoteStreamTracks(stream: MediaStream | null) {
   if (!stream) {
     return;
@@ -55,6 +52,10 @@ export function usePrivateRoomWebRtc({
   lastSignal,
 }: UsePrivateRoomWebRtcOptions) {
   const isCaller = currentUserRole === "streamer";
+
+  const rtcIceServers = useMemo(() => getRtcIceServers(), []);
+  const hasTurnServer = useMemo(() => iceConfigHasTurn(rtcIceServers), [rtcIceServers]);
+  const iceServersCount = rtcIceServers.length;
 
   const [connectionState, setConnectionState] = useState<PrivateRoomWebRtcConnectionState>("idle");
   const [iceConnectionState, setIceConnectionState] = useState<string>("");
@@ -175,7 +176,7 @@ export function usePrivateRoomWebRtc({
   }, []);
 
   const createPeerConnection = useCallback(() => {
-    const pc = new RTCPeerConnection(PeerConfig);
+    const pc = new RTCPeerConnection({ iceServers: rtcIceServers });
     pcRef.current = pc;
 
     pc.onicecandidate = (event) => {
@@ -243,7 +244,7 @@ export function usePrivateRoomWebRtc({
 
     attachLocalTracks(pc, localStream);
     return pc;
-  }, [attachLocalTracks, localStream, sendSignal, sessionId, syncStatesFromPc]);
+  }, [attachLocalTracks, localStream, rtcIceServers, sendSignal, sessionId, syncStatesFromPc]);
 
   const startConnection = useCallback(async () => {
     if (typeof window === "undefined" || typeof RTCPeerConnection === "undefined") {
@@ -472,6 +473,7 @@ export function usePrivateRoomWebRtc({
   ]);
 
   if (typeof window === "undefined") {
+    const ice = getRtcIceServers();
     return {
       connectionState: "idle" as const,
       iceConnectionState: "",
@@ -481,6 +483,8 @@ export function usePrivateRoomWebRtc({
       isCaller,
       startConnection: async () => {},
       closeConnection: () => {},
+      hasTurnServer: iceConfigHasTurn(ice),
+      iceServersCount: ice.length,
     };
   }
 
@@ -493,5 +497,7 @@ export function usePrivateRoomWebRtc({
     isCaller,
     startConnection,
     closeConnection,
+    hasTurnServer,
+    iceServersCount,
   };
 }
