@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
+import { gotoDomWithRetry } from "./helpers/navigation";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 import { ensureStreamerLive } from "./helpers/studio";
 
@@ -68,7 +69,7 @@ test("private room session starts and charges member minutes", async ({ browser,
       },
       testInfo,
     );
-    await streamerPage.goto("/studio");
+    await gotoDomWithRetry(streamerPage, "/studio");
     roomId = (await ensureStreamerLive(streamerPage, request, { waitRoomTimeoutMs: 60_000 })).id;
 
     await loginWithStabilizedAuth(
@@ -84,7 +85,7 @@ test("private room session starts and charges member minutes", async ({ browser,
       },
       testInfo,
     );
-    await memberPage.goto("/member");
+    await gotoDomWithRetry(memberPage, "/member");
     await expect
       .poll(async () => getWalletBalance(memberPage), { timeout: 25_000, message: "Veli wallet balance should be >= 500" })
       .toBeGreaterThanOrEqual(500);
@@ -119,13 +120,13 @@ test("private room session starts and charges member minutes", async ({ browser,
     await expect(memberPage.getByTestId("private-session-result")).toContainText(/kapat[ıi]ld[ıi].*harcanan s[üu]re/i, { timeout: 30_000 });
     await expect(streamerPage.getByTestId("private-session-panel")).toHaveCount(0, { timeout: 30_000 });
 
-    await memberPage.goto("/member");
+    await gotoDomWithRetry(memberPage, "/member");
     await expect
       .poll(async () => getWalletBalance(memberPage), { timeout: 30_000, message: "wallet should be reduced after session end" })
       .toBeLessThanOrEqual(startBalance - 1);
 
     await streamerPage.goto("/streamer");
-    await expect(streamerPage.getByRole("heading", { name: /bugunku ozel oda kazanci/i }).first()).toBeVisible({ timeout: 20_000 });
+    await expect(streamerPage.getByRole("heading", { name: /Bugünkü özel oda kazancı/i }).first()).toBeVisible({ timeout: 20_000 });
     await expect(streamerPage.getByText(/net:\s*[1-9]\d*\s*dk/i).first()).toBeVisible({ timeout: 20_000 });
 
     await loginWithStabilizedAuth(

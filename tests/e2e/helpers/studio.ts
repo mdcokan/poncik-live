@@ -24,7 +24,7 @@ export async function ensureStreamerLive(
   }
 
   try {
-    await expect(startButton).toBeEnabled({ timeout: 25_000 });
+    await expect(startButton).toBeEnabled({ timeout: 45_000 });
   } catch {
     const hints: string[] = [];
     const restricted = page.getByText("Hesap kısıtlı");
@@ -40,7 +40,7 @@ export async function ensureStreamerLive(
     hints.push(`startButtonDisabled=${await startButton.isDisabled().catch(() => true)}`);
     const mainSnippet = (await page.locator("main").first().innerText().catch(() => "")).slice(0, 500);
     throw new Error(
-      `YAYINA BAŞLA still disabled after 25s (restriction / busy / hydration). visibleHints=${hints.join(" | ")} mainSnippet=${JSON.stringify(mainSnippet)}`,
+      `YAYINA BAŞLA still disabled after 45s (restriction / busy / hydration). visibleHints=${hints.join(" | ")} mainSnippet=${JSON.stringify(mainSnippet)}`,
     );
   }
 

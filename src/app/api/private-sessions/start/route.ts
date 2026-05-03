@@ -17,6 +17,15 @@ type StartSessionResult = {
   started_at: string;
 };
 
+type ProfileRow = {
+  id: string;
+  display_name: string | null;
+};
+
+type WalletRow = {
+  balance: number | null;
+};
+
 const START_ERROR_BY_CODE: Record<string, ApiError> = {
   AUTH_REQUIRED: { status: 401, code: "AUTH_REQUIRED", message: "Giriş yapmalısın." },
   REQUEST_NOT_FOUND: { status: 404, code: "REQUEST_NOT_FOUND", message: "Talep bulunamadı." },
@@ -136,6 +145,21 @@ export async function POST(request: Request) {
     return noStoreJson({ ok: false, code: "UNKNOWN_ERROR", message: "Özel oda başlatılamadı." }, { status: 500 });
   }
 
+  const profileIds = [result.streamer_id, result.viewer_id];
+  const [{ data: profiles }, { data: viewerWallet }] = await Promise.all([
+    supabase.from("profiles").select("id, display_name").in("id", profileIds),
+    supabase.from("wallets").select("balance").eq("user_id", result.viewer_id).maybeSingle<WalletRow>(),
+  ]);
+  const profileList = (profiles ?? []) as ProfileRow[];
+  const streamerName =
+    profileList.find((row) => row.id === result.streamer_id)?.display_name?.trim() || "Yayıncı";
+  const viewerName = profileList.find((row) => row.id === result.viewer_id)?.display_name?.trim() || "Üye";
+  const viewerBalanceMinutes = Math.max(0, Math.floor(viewerWallet?.balance ?? 0));
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(result.started_at).getTime()) / 1000));
+  const estimatedChargedMinutes = Math.max(1, Math.ceil(elapsedSeconds / 60));
+  const estimatedRemainingMinutes = Math.max(0, viewerBalanceMinutes - estimatedChargedMinutes);
+  const isLowBalance = estimatedRemainingMinutes <= 2;
+
   return noStoreJson({
     ok: true,
     session: {
@@ -143,9 +167,20 @@ export async function POST(request: Request) {
       requestId: result.request_id,
       roomId: result.room_id,
       streamerId: result.streamer_id,
+      streamerName,
       viewerId: result.viewer_id,
+      viewerName,
       status: result.status,
       startedAt: result.started_at,
+      viewerBalanceMinutes,
+      elapsedSeconds,
+      estimatedChargedMinutes,
+      estimatedRemainingMinutes,
+      isLowBalance,
+      viewerReady: false,
+      streamerReady: false,
+      viewerReadyAt: null,
+      streamerReadyAt: null,
     },
   });
 }

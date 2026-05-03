@@ -98,7 +98,10 @@ function toMatchedRoom(room: LiveRoomApiItem): MatchedLiveRoom {
  */
 export async function pollLiveRoomsSnapshot(request: APIRequestContext): Promise<LiveRoomsPollSnapshot> {
   try {
-    const response = await request.get(`/api/live-rooms?limit=24&t=${Date.now()}`, { failOnStatusCode: false });
+    const response = await request.get(`/api/live-rooms?limit=24&t=${Date.now()}`, {
+      failOnStatusCode: false,
+      timeout: 15_000,
+    });
     const httpStatus = response.status();
     const bodyText = await response.text();
     const bodySnippet = snippet(bodyText);

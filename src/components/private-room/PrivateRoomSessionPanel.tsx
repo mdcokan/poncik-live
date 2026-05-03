@@ -81,6 +81,8 @@ export default function PrivateRoomSessionPanel({
   onSendSignal,
   lastSignalLabel = null,
 }: PrivateRoomSessionPanelProps) {
+  const displayStreamerName = (streamerName ?? "").trim() || "Yayıncı";
+  const displayViewerName = (viewerName ?? "").trim() || "Üye";
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isAutoEnding, setIsAutoEnding] = useState(false);
   const [localReady, setLocalReady] = useState(currentUserRole === "viewer" ? viewerReady : streamerReady);
@@ -165,7 +167,7 @@ export default function PrivateRoomSessionPanel({
           <>
             <PrivateRoomMediaPrep
               roleLabel="Yayıncı"
-              participantName={`Yayıncı ${streamerName}`}
+              participantName={`Yayıncı ${displayStreamerName}`}
               initialReady={localReady}
               onReadyChange={async (ready) => {
                 setLocalReadyError(null);
@@ -185,14 +187,14 @@ export default function PrivateRoomSessionPanel({
                 }
               }}
             />
-            <PlaceholderCard title="Üye" name={`Üye ${viewerName}`} />
+            <PlaceholderCard title="Üye" name={`Üye ${displayViewerName}`} />
           </>
         ) : (
           <>
-            <PlaceholderCard title="Yayıncı" name={`Yayıncı ${streamerName}`} />
+            <PlaceholderCard title="Yayıncı" name={`Yayıncı ${displayStreamerName}`} />
             <PrivateRoomMediaPrep
               roleLabel="Üye"
-              participantName={`Üye ${viewerName}`}
+              participantName={`Üye ${displayViewerName}`}
               initialReady={localReady}
               onReadyChange={async (ready) => {
                 setLocalReadyError(null);

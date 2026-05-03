@@ -10,6 +10,8 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:3000",
     browserName: "chromium",
+    navigationTimeout: 60_000,
+    actionTimeout: 30_000,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

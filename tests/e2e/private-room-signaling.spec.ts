@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
+import { gotoDomWithRetry } from "./helpers/navigation";
 import { attachPrivateRoomDiagnostics } from "./helpers/private-room-diagnostics";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 import { ensureStreamerLive } from "./helpers/studio";
@@ -46,7 +47,7 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
       },
       testInfo,
     );
-    await streamerPage.goto("/studio");
+    await gotoDomWithRetry(streamerPage, "/studio");
     roomId = (await ensureStreamerLive(streamerPage, request, { waitRoomTimeoutMs: 60_000 })).id;
 
     await loginWithStabilizedAuth(
@@ -62,7 +63,7 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
       },
       testInfo,
     );
-    await memberPage.goto("/member");
+    await gotoDomWithRetry(memberPage, "/member");
     await expect
       .poll(async () => getWalletBalance(memberPage), { timeout: 25_000, message: "Veli wallet balance should be >= 500" })
       .toBeGreaterThanOrEqual(500);

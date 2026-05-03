@@ -110,7 +110,10 @@ export async function GET(request: Request) {
     supabase.from("profiles").select("id, display_name").in("id", profileIds),
     supabase.from("wallets").select("balance").eq("user_id", data.viewer_id).maybeSingle<WalletRow>(),
   ]);
-  const profileMap = new Map(((profiles ?? []) as ProfileRow[]).map((profile) => [profile.id, profile.display_name?.trim() || "Kullanıcı"]));
+  const profileList = (profiles ?? []) as ProfileRow[];
+  const streamerName =
+    profileList.find((row) => row.id === data.streamer_id)?.display_name?.trim() || "Yayıncı";
+  const viewerName = profileList.find((row) => row.id === data.viewer_id)?.display_name?.trim() || "Üye";
   const viewerBalanceMinutes = Math.max(0, Math.floor(viewerWallet?.balance ?? 0));
   const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(data.started_at).getTime()) / 1000));
   const estimatedChargedMinutes = Math.max(1, Math.ceil(elapsedSeconds / 60));
@@ -124,9 +127,9 @@ export async function GET(request: Request) {
       roomId: data.room_id,
       requestId: data.request_id,
       streamerId: data.streamer_id,
-      streamerName: profileMap.get(data.streamer_id) ?? "Yayıncı",
+      streamerName,
       viewerId: data.viewer_id,
-      viewerName: profileMap.get(data.viewer_id) ?? "Üye",
+      viewerName,
       status: data.status,
       startedAt: data.started_at,
       viewerBalanceMinutes,

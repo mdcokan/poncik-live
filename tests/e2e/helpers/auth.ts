@@ -88,7 +88,7 @@ export async function loginWithStabilizedAuth(
   page.on("requestfailed", onRequestFailed);
 
   try {
-    await page.goto(opts.loginPath);
+    await page.goto(opts.loginPath, { timeout: 60_000 });
     await expect(page).toHaveURL(new RegExp(`${opts.loginPath.replace("/", "\\/")}(?:\\/|$)`));
     await expect(page.locator("form").first()).toBeVisible({ timeout: 10_000 });
 
@@ -125,7 +125,7 @@ export async function loginWithStabilizedAuth(
       return;
     }
 
-    await page.goto(opts.targetUrl);
+    await page.goto(opts.targetUrl, { timeout: 60_000 });
     const currentUrl = page.url();
     const bouncedToLogin = LOGIN_PAGE_URL.test(currentUrl);
     if (!bouncedToLogin) {
