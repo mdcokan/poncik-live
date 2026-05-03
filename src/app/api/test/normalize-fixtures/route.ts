@@ -153,6 +153,31 @@ export async function POST(request: Request) {
       throw new Error(`Failed to set viewer display_name: ${viewerDisplayNameError.message}`);
     }
 
+    let liveRoomsClosedForEda = 0;
+    const { data: liveOwnedRooms, error: liveRoomsListError } = await adminClient
+      .from("rooms")
+      .select("id")
+      .eq("owner_id", fixtureUsers[STREAMER_EMAIL].id)
+      .eq("status", "live");
+    if (liveRoomsListError) {
+      throw new Error(`Failed to list live rooms for fixture streamer: ${liveRoomsListError.message}`);
+    }
+    for (const row of liveOwnedRooms ?? []) {
+      const { error: closeLiveError } = await adminClient.rpc("admin_close_live_room", {
+        p_room_id: row.id,
+        p_reason: "e2e fixture normalize",
+      });
+      if (!closeLiveError) {
+        liveRoomsClosedForEda += 1;
+        continue;
+      }
+      const msg = closeLiveError.message ?? "";
+      if (msg.includes("ROOM_NOT_LIVE") || msg.includes("ROOM_NOT_FOUND")) {
+        continue;
+      }
+      throw new Error(`admin_close_live_room failed during fixture normalize: ${closeLiveError.message}`);
+    }
+
     const { data: pendingPrivateRows, error: pendingPrivateError } = await adminClient
       .from("private_room_requests")
       .select("id")
@@ -251,7 +276,24 @@ export async function POST(request: Request) {
       }
     }
 
-    return json({ ok: true });
+    const { data: edaProfileSnapshot } = await adminClient
+      .from("profiles")
+      .select("role, is_banned, display_name")
+      .eq("id", fixtureUsers[STREAMER_EMAIL].id)
+      .maybeSingle<{ role: string | null; is_banned: boolean | null; display_name: string | null }>();
+
+    return json({
+      ok: true,
+      snapshot: {
+        eda: {
+          email: STREAMER_EMAIL,
+          role: edaProfileSnapshot?.role ?? null,
+          is_banned: edaProfileSnapshot?.is_banned ?? null,
+          display_name: edaProfileSnapshot?.display_name ?? null,
+        },
+        liveRoomsClosedForEda,
+      },
+    });
   } catch (error) {
     return json(
       {

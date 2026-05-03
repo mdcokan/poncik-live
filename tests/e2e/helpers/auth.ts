@@ -3,6 +3,35 @@ import { expect } from "@playwright/test";
 const AUTH_ERROR_TEXT = /hatal[ıi]|ba[sş]ar[ıi]s[ıi]z|ge[çc]ersiz|yanl[ıi][şs]|unauthorized|forbidden|error|failed/i;
 const LOGIN_PAGE_URL = /\/(login|streamer-login)(?:\/|$)/i;
 
+/**
+ * Streamer post-login URL: `/streamer` or `/studio` as path segments.
+ * Does **not** match `/streamer-login` (lookahead requires `/`, `?`, `#`, or end after the segment).
+ */
+export const STREAMER_AUTH_SUCCESS_URL = /\/(?:streamer|studio)(?=[/?#]|$)/;
+
+async function waitForSupabaseAuthStorage(page: import("@playwright/test").Page, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ready = await page.evaluate(() =>
+      Object.keys(localStorage).some((k) => k.startsWith("sb-") && k.endsWith("-auth-token")),
+    );
+    if (ready) {
+      return;
+    }
+    await page.waitForTimeout(150);
+  }
+  throw new Error(
+    `Supabase session not persisted to localStorage after login (no sb-*-auth-token) within ${timeoutMs}ms. URL=${page.url()}`,
+  );
+}
+
+function assertStreamerNotOnLoginPage(page: import("@playwright/test").Page) {
+  const url = page.url();
+  if (/\/streamer-login/i.test(url)) {
+    throw new Error(`Streamer auth landed on /streamer-login (must not count as success). URL=${url}`);
+  }
+}
+
 function isStaticAssetUrl(url: string) {
   const normalized = url.toLowerCase();
   return (
@@ -122,6 +151,10 @@ export async function loginWithStabilizedAuth(
     }
 
     if (submitResult === "success-url") {
+      await waitForSupabaseAuthStorage(page);
+      if (opts.role === "streamer") {
+        assertStreamerNotOnLoginPage(page);
+      }
       return;
     }
 
@@ -135,6 +168,10 @@ export async function loginWithStabilizedAuth(
         ? await opts.successIndicator.isVisible().catch(() => false)
         : false;
       if (hasSuccessUrl || hasSuccessIndicator || !formVisible) {
+        await waitForSupabaseAuthStorage(page);
+        if (opts.role === "streamer") {
+          assertStreamerNotOnLoginPage(page);
+        }
         return;
       }
     }

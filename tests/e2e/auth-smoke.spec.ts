@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { loginWithStabilizedAuth } from "./helpers/auth";
+import { gotoDomWithRetry } from "./helpers/navigation";
+import { loginWithStabilizedAuth, STREAMER_AUTH_SUCCESS_URL } from "./helpers/auth";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -16,14 +17,18 @@ test("auth smoke: streamer login redirects to streamer area", async ({ page }, t
       loginPath: "/streamer-login",
       email: STREAMER_EMAIL,
       password: PASSWORD,
-      successUrl: /\/(streamer|studio)(?:\/|$)/,
+      successUrl: STREAMER_AUTH_SUCCESS_URL,
       targetUrl: "/studio",
       successIndicator: page.getByRole("button", { name: /ba[sş]la/i }).first(),
     },
     testInfo,
   );
 
-  await expect(page).toHaveURL(/\/(streamer|studio)(?:\/|$)/, { timeout: 10_000 });
+  await expect(page).not.toHaveURL(/\/streamer-login/);
+  await expect(page).toHaveURL(STREAMER_AUTH_SUCCESS_URL, { timeout: 10_000 });
+  await gotoDomWithRetry(page, "/studio");
+  await expect(page).not.toHaveURL(/\/streamer-login/);
+  await expect(page.getByRole("button", { name: /ba[sş]la/i }).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test("auth smoke: member login redirects to member area", async ({ page }, testInfo) => {
