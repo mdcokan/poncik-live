@@ -65,6 +65,7 @@ export function usePrivateRoomWebRtc({
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const processedSignalIdsRef = useRef(new Set<string>());
   const remoteIceQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const startInFlightRef = useRef(false);
 
   const flushRemoteIceQueue = useCallback(async () => {
     const pc = pcRef.current;
@@ -76,7 +77,7 @@ export function usePrivateRoomWebRtc({
       try {
         await pc.addIceCandidate(init);
       } catch {
-        // Duplicate / ordering — ignored for foundation tier.
+        setErrorMessage((prev) => prev ?? "Bağlantı bilgisi işlenemedi.");
       }
     }
   }, []);
@@ -95,7 +96,7 @@ export function usePrivateRoomWebRtc({
       try {
         await pc.addIceCandidate(init);
       } catch {
-        // Ordering / duplicate candidate — ignored.
+        setErrorMessage((prev) => prev ?? "Bağlantı bilgisi işlenemedi.");
       }
     },
     [],
@@ -107,10 +108,13 @@ export function usePrivateRoomWebRtc({
     const cs = pc.connectionState;
     if (cs === "connected") {
       setConnectionState("connected");
+      setErrorMessage(null);
     } else if (cs === "disconnected") {
       setConnectionState("disconnected");
+      setErrorMessage("Bağlantı kesildi.");
     } else if (cs === "failed") {
       setConnectionState("failed");
+      setErrorMessage("Görüntülü bağlantı kurulamadı. Lütfen tekrar deneyin.");
     } else if (cs === "closed") {
       setConnectionState("closed");
     } else if (cs === "connecting") {
@@ -134,19 +138,20 @@ export function usePrivateRoomWebRtc({
   const closeConnection = useCallback(() => {
     remoteIceQueueRef.current = [];
     const pc = pcRef.current;
+    if (!pc) {
+      return;
+    }
     pcRef.current = null;
-    if (pc) {
-      pc.onconnectionstatechange = null;
-      pc.onicecandidate = null;
-      pc.oniceconnectionstatechange = null;
-      pc.onnegotiationneeded = null;
-      pc.onsignalingstatechange = null;
-      pc.ontrack = null;
-      try {
-        pc.close();
-      } catch {
-        // ignore
-      }
+    pc.onconnectionstatechange = null;
+    pc.onicecandidate = null;
+    pc.oniceconnectionstatechange = null;
+    pc.onnegotiationneeded = null;
+    pc.onsignalingstatechange = null;
+    pc.ontrack = null;
+    try {
+      pc.close();
+    } catch {
+      // ignore
     }
     setRemoteStream((prev) => {
       stopRemoteStreamTracks(prev);
@@ -205,19 +210,32 @@ export function usePrivateRoomWebRtc({
     if (typeof window === "undefined" || typeof RTCPeerConnection === "undefined") {
       return;
     }
-    setErrorMessage(null);
+    if (startInFlightRef.current) {
+      return;
+    }
     if (!enabled || !sessionId?.trim()) {
       setErrorMessage("Özel oda oturumu aktif değil.");
       return;
     }
 
-    if (pcRef.current) {
-      closeConnection();
+    const existing = pcRef.current;
+    if (existing) {
+      const ecs = existing.connectionState;
+      if (ecs === "connected" || ecs === "connecting") {
+        return;
+      }
     }
 
-    setConnectionState("creating");
+    setErrorMessage(null);
+    startInFlightRef.current = true;
 
     try {
+      if (pcRef.current) {
+        closeConnection();
+      }
+
+      setConnectionState("creating");
+
       const pc = createPeerConnection();
 
       if (isCaller) {
@@ -238,6 +256,8 @@ export function usePrivateRoomWebRtc({
       setErrorMessage(msg);
       setConnectionState("failed");
       closeConnection();
+    } finally {
+      startInFlightRef.current = false;
     }
   }, [closeConnection, createPeerConnection, enabled, isCaller, sendSignal, sessionId, syncStatesFromPc]);
 
@@ -386,8 +406,11 @@ export function usePrivateRoomWebRtc({
           return;
         }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Sinyal işlenemedi.";
-        setErrorMessage(msg);
+        const raw = e instanceof Error ? e.message : "Sinyal işlenemedi.";
+        const friendly = /setRemoteDescription|setLocalDescription|addIceCandidate|createAnswer|createOffer/i.test(raw)
+          ? "Uzak bağlantı ayarı güncellenemedi."
+          : raw;
+        setErrorMessage(friendly);
         if (signalId) {
           processedSignalIdsRef.current.add(signalId);
         }

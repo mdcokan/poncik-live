@@ -1,9 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
-import { gotoDomWithRetry } from "./helpers/navigation";
 import { attachPrivateRoomDiagnostics } from "./helpers/private-room-diagnostics";
+import { createPrivateSessionForEdaAndVeli } from "./helpers/private-room-flow";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
-import { ensureStreamerLive } from "./helpers/studio";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -37,9 +36,6 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
       },
       testInfo,
     );
-    await gotoDomWithRetry(streamerPage, "/studio");
-    roomId = (await ensureStreamerLive(streamerPage, request, { waitRoomTimeoutMs: 60_000 })).id;
-
     await loginWithStabilizedAuth(
       memberPage,
       {
@@ -53,28 +49,19 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
       },
       testInfo,
     );
-    await gotoDomWithRetry(memberPage, "/member");
 
-    await memberPage.locator(`a[href="/rooms/${roomId}"]`).first().click();
-    await expect(memberPage).toHaveURL(new RegExp(`/rooms/${roomId}$`), { timeout: 20_000 });
-
-    const privateRequestButton = memberPage.getByTestId("private-room-request-button");
-    await expect(privateRequestButton).toBeEnabled({
-      timeout: 60_000,
-      message: "Özel oda butonu yayın canlı olana kadar gecikmiş olabilir.",
+    const created = await createPrivateSessionForEdaAndVeli({
+      streamerPage,
+      memberPage,
+      request,
+      testInfo,
+      skipNormalizeFixtures: true,
+      waitRoomTimeoutMs: 60_000,
     });
-    await privateRequestButton.click();
-    await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
-
-    const acceptButton = streamerPage.getByTestId("accept-private-request-button").first();
-    await expect(acceptButton).toBeVisible({ timeout: 25_000 });
-    await acceptButton.click();
+    roomId = created.roomId;
 
     const streamerSessionPanel = streamerPage.getByTestId("private-session-panel");
     const memberSessionPanel = memberPage.getByTestId("private-session-panel");
-
-    await expect(streamerSessionPanel).toBeVisible({ timeout: 30_000 });
-    await expect(memberSessionPanel).toBeVisible({ timeout: 30_000 });
     await expect(streamerPage.getByTestId("private-webrtc-panel")).toBeVisible({ timeout: 30_000 });
     await expect(memberPage.getByTestId("private-webrtc-panel")).toBeVisible({ timeout: 30_000 });
 
@@ -83,7 +70,18 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
     await expect(memberPage.getByTestId("private-session-both-ready")).toBeVisible({ timeout: 30_000 });
     await expect(streamerPage.getByTestId("private-session-both-ready")).toBeVisible({ timeout: 30_000 });
 
-    await streamerPage.getByTestId("private-webrtc-start-button").click({ timeout: 30_000 });
+    const studioStart = streamerPage.getByTestId("private-webrtc-start-button");
+    if (await studioStart.isDisabled()) {
+      const panel = streamerPage.getByTestId("private-session-panel");
+      const vr = await panel.getAttribute("data-viewer-ready");
+      const sr = await panel.getAttribute("data-streamer-ready");
+      await testInfo.attach("private-webrtc-start-blocked.txt", {
+        body: `studio private-session-panel data-viewer-ready=${vr} data-streamer-ready=${sr}`,
+        contentType: "text/plain",
+      });
+    }
+
+    await studioStart.click({ timeout: 30_000 });
 
     const studioWebrtcState = streamerPage.getByTestId("private-webrtc-state");
     await expect
@@ -110,6 +108,15 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
       memberPage.getByTestId("private-webrtc-remote-placeholder"),
     );
     await expect(remoteOrPlaceholder.first()).toBeVisible({ timeout: 10_000 });
+
+    const memberError = memberPage.getByTestId("private-webrtc-error");
+    if (await memberError.isVisible().catch(() => false)) {
+      const errText = (await memberError.textContent().catch(() => "")) ?? "";
+      await testInfo.attach("private-webrtc-error-note.txt", {
+        body: `Görüntülü hata metni (bu test için başarısızlık değil): ${errText}`,
+        contentType: "text/plain",
+      });
+    }
 
     await streamerPage.getByTestId("private-webrtc-close-button").click();
     await expect

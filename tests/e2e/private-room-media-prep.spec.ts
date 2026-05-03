@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
-import { waitForLiveRoomByStreamerName } from "./helpers/live-room";
+import { attachPrivateRoomDiagnostics } from "./helpers/private-room-diagnostics";
+import { createPrivateSessionForEdaAndVeli } from "./helpers/private-room-flow";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
 
 const STREAMER_EMAIL = "eda@test.com";
@@ -17,6 +18,7 @@ test("private room media prep appears on viewer and studio", async ({ browser, r
   const memberPage = await memberContext.newPage();
 
   let sessionStarted = false;
+  let roomId = "";
 
   try {
     await loginWithStabilizedAuth(
@@ -33,17 +35,6 @@ test("private room media prep appears on viewer and studio", async ({ browser, r
       testInfo,
     );
 
-    await streamerPage.goto("/studio");
-    const startButton = streamerPage.getByRole("button", { name: /ba[sş]la/i }).first();
-    const stopButton = streamerPage.getByRole("button", { name: /b[ıiİI]t[ıiİI]r/i }).first();
-    if (await stopButton.isVisible().catch(() => false)) {
-      await stopButton.click();
-      await expect(startButton).toBeVisible({ timeout: 20_000 });
-    }
-    await startButton.click();
-    await expect(stopButton).toBeVisible({ timeout: 20_000 });
-    const roomId = (await waitForLiveRoomByStreamerName(request, /Eda/i)).id;
-
     await loginWithStabilizedAuth(
       memberPage,
       {
@@ -58,16 +49,15 @@ test("private room media prep appears on viewer and studio", async ({ browser, r
       testInfo,
     );
 
-    await memberPage.goto(`/rooms/${roomId}`);
-    await memberPage.getByTestId("private-room-request-button").click();
-    await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
-
-    const acceptButton = streamerPage.getByTestId("accept-private-request-button").first();
-    await expect(acceptButton).toBeVisible({ timeout: 25_000 });
-    await acceptButton.click();
-
-    await expect(memberPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
-    await expect(streamerPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
+    const created = await createPrivateSessionForEdaAndVeli({
+      streamerPage,
+      memberPage,
+      request,
+      testInfo,
+      skipNormalizeFixtures: true,
+      waitRoomTimeoutMs: 60_000,
+    });
+    roomId = created.roomId;
     sessionStarted = true;
 
     const memberPrep = memberPage.getByTestId("private-media-prep");
@@ -84,6 +74,14 @@ test("private room media prep appears on viewer and studio", async ({ browser, r
     await requestButton.click();
 
     await expect(streamerPage.getByTestId("private-media-prep")).toBeVisible({ timeout: 30_000 });
+  } catch (e) {
+    await attachPrivateRoomDiagnostics(testInfo, {
+      memberPage,
+      streamerPage,
+      request,
+      roomId: roomId || undefined,
+    }).catch(() => {});
+    throw e;
   } finally {
     if (sessionStarted && !memberPage.isClosed()) {
       const endButton = memberPage.getByTestId("private-session-end-button");

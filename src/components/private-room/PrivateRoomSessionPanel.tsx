@@ -134,6 +134,7 @@ export default function PrivateRoomSessionPanel({
     estimatedRemainingMinutes <= lowBalanceThresholdMinutes;
   const remoteReady = currentUserRole === "viewer" ? streamerReady : viewerReady;
   const bothReady = viewerReady && streamerReady;
+  const webRtcHookEnabled = Boolean(enableWebRtc && bothReady && onSendSignal && currentUserId);
 
   const handleLocalStreamChange = useCallback((stream: MediaStream | null) => {
     setLocalMediaStream(stream);
@@ -143,7 +144,7 @@ export default function PrivateRoomSessionPanel({
 
   const webrtc = usePrivateRoomWebRtc({
     sessionId,
-    enabled: Boolean(enableWebRtc && bothReady && onSendSignal && currentUserId),
+    enabled: webRtcHookEnabled,
     currentUserRole,
     currentUserId,
     localStream: localMediaStream,
@@ -217,6 +218,10 @@ export default function PrivateRoomSessionPanel({
       className="mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4"
       data-testid="private-session-panel"
       data-session-id={sessionId}
+      data-current-role={currentUserRole}
+      data-viewer-ready={viewerReady ? "true" : "false"}
+      data-streamer-ready={streamerReady ? "true" : "false"}
+      data-webrtc-enabled={enableWebRtc && Boolean(onSendSignal) ? "true" : "false"}
     >
       <h2 className="text-lg font-black text-violet-900">Özel Oda Aktif</h2>
       <p className="mt-1 text-sm text-violet-800">Kamera hazırlığı ve görüntülü bağlantı (WebRTC) bu panelden yönetilir.</p>
@@ -306,49 +311,51 @@ export default function PrivateRoomSessionPanel({
           <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-700">Görüntülü bağlantı</p>
           {!bothReady ? (
             <p className="mt-2 text-sm text-zinc-600">Görüntülü bağlantı için iki tarafın da hazır olması gerekir.</p>
-          ) : (
-            <>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="text-sm font-semibold text-zinc-700">Durum:</span>
-                <span
-                  data-testid="private-webrtc-state"
-                  data-connection-state={webrtc.connectionState}
-                  className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-800"
-                >
-                  {mapWebRtcConnectionLabel(webrtc.connectionState)}
-                </span>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  data-testid="private-webrtc-start-button"
-                  disabled={
-                    !bothReady ||
-                    webrtc.connectionState === "creating" ||
-                    webrtc.connectionState === "connecting" ||
-                    webrtc.connectionState === "connected"
-                  }
-                  className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                  onClick={() => {
-                    void webrtc.startConnection();
-                  }}
-                >
-                  Bağlantıyı Başlat
-                </button>
-                <button
-                  type="button"
-                  data-testid="private-webrtc-close-button"
-                  disabled={webrtc.connectionState === "idle" || webrtc.connectionState === "closed"}
-                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => {
-                    webrtc.closeConnection();
-                  }}
-                >
-                  Bağlantıyı Kapat
-                </button>
-              </div>
-            </>
-          )}
+          ) : null}
+          {bothReady ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-zinc-700">Durum:</span>
+              <span
+                data-testid="private-webrtc-state"
+                data-connection-state={webrtc.connectionState}
+                className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-800"
+              >
+                {mapWebRtcConnectionLabel(webrtc.connectionState)}
+              </span>
+            </div>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              data-testid="private-webrtc-start-button"
+              disabled={
+                !bothReady ||
+                webrtc.connectionState === "creating" ||
+                webrtc.connectionState === "connecting" ||
+                webrtc.connectionState === "connected"
+              }
+              className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-300"
+              onClick={() => {
+                void webrtc.startConnection();
+              }}
+            >
+              Bağlantıyı Başlat
+            </button>
+            <button
+              type="button"
+              data-testid="private-webrtc-close-button"
+              disabled={webrtc.connectionState === "idle" || webrtc.connectionState === "closed"}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => {
+                webrtc.closeConnection();
+              }}
+            >
+              Bağlantıyı Kapat
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            Bazı ağlarda görüntülü bağlantı kurulamayabilir; bu durumda yeniden deneyebilirsiniz.
+          </p>
           <div className="mt-4 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-950">
             {webrtc.remoteStream ? (
               <video
