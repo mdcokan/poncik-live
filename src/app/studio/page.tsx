@@ -16,6 +16,7 @@ import {
   getSupabaseBrowserClient,
 } from "@/lib/supabase-browser";
 import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
+import { DirectMessagesPanel } from "@/components/dm/DirectMessagesPanel";
 import { usePrivateRoomSignaling } from "@/hooks/use-private-room-signaling";
 
 type RoomStatus = "offline" | "live" | "private";
@@ -138,6 +139,22 @@ function getPresenceRoleLabel(role: string) {
   return "Izleyici";
 }
 
+function withStudioPrivateSessionDisplayNames(
+  session: PrivateSessionSummary | null,
+  fallbacks: { streamerName: string; viewerName: string },
+): PrivateSessionSummary | null {
+  if (!session) {
+    return null;
+  }
+  const streamerName = session.streamerName?.trim() || fallbacks.streamerName;
+  const viewerName = session.viewerName?.trim() || fallbacks.viewerName;
+  return {
+    ...session,
+    streamerName,
+    viewerName,
+  };
+}
+
 function formatSeenText(lastSeenAt: string) {
   const milliseconds = Date.now() - new Date(lastSeenAt).getTime();
   if (!Number.isFinite(milliseconds) || milliseconds < 0) {
@@ -195,6 +212,7 @@ export default function StudioPage() {
   const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
   const [moderationBusyUserId, setModerationBusyUserId] = useState<string | null>(null);
   const [moderationFeedback, setModerationFeedback] = useState<string | null>(null);
+  const [showDmOverlay, setShowDmOverlay] = useState(false);
   const [chatIdentity, setChatIdentity] = useState<{ userId: string | null; displayName: string | null }>({
     userId: null,
     displayName: null,
@@ -1051,8 +1069,12 @@ export default function StudioPage() {
         return;
       }
       const nextSession = payload.session && payload.session.roomId === activeRoom.id ? payload.session : null;
+      const resolvedSession = withStudioPrivateSessionDisplayNames(nextSession, {
+        streamerName: displayName?.trim() || chatIdentity.displayName?.trim() || "Yayıncı",
+        viewerName: "Üye",
+      });
       setActivePrivateSession((previous) => {
-        if (previous?.sessionId && !nextSession?.sessionId) {
+        if (previous?.sessionId && !resolvedSession?.sessionId) {
           setPrivateSessionResult((message) => {
             if (!message || message === "Session başladı") {
               return "Özel oda kapatıldı.";
@@ -1060,7 +1082,7 @@ export default function StudioPage() {
             return message;
           });
         }
-        return nextSession;
+        return resolvedSession;
       });
     } catch {
       // keep stale value on transient failures
@@ -1109,7 +1131,10 @@ export default function StudioPage() {
     });
   }
 
-  async function startPrivateSession(requestId: string) {
+  async function startPrivateSession(
+    requestId: string,
+    nameFallbacks?: { streamerName: string; viewerName: string },
+  ) {
     if (!requestId || isPrivateSessionStarting) {
       return;
     }
@@ -1140,7 +1165,15 @@ export default function StudioPage() {
         setPrivateRequestsFeedback(payload.message || "Özel oda başlatılamadı.");
         return;
       }
-      setActivePrivateSession(payload.session ?? null);
+      const streamerFallback =
+        nameFallbacks?.streamerName ?? displayName?.trim() ?? chatIdentity.displayName?.trim() ?? "Yayıncı";
+      const viewerFallback = nameFallbacks?.viewerName ?? "Üye";
+      setActivePrivateSession(
+        withStudioPrivateSessionDisplayNames(payload.session ?? null, {
+          streamerName: streamerFallback,
+          viewerName: viewerFallback,
+        }),
+      );
       setPrivateSessionResult("Session başladı");
     } catch {
       setPrivateRequestsFeedback("Özel oda başlatılamadı.");
@@ -1222,16 +1255,23 @@ export default function StudioPage() {
         return;
       }
 
-      setPrivateRequests((previous) => previous.filter((item) => item.id !== requestId));
+      let acceptedSnapshot: StudioPrivateRequestItem | undefined;
+      setPrivateRequests((previous) => {
+        acceptedSnapshot = previous.find((item) => item.id === requestId);
+        return previous.filter((item) => item.id !== requestId);
+      });
       if (decision === "accepted") {
-        await startPrivateSession(requestId);
+        await startPrivateSession(requestId, {
+          streamerName: displayName?.trim() || chatIdentity.displayName?.trim() || "Yayıncı",
+          viewerName: acceptedSnapshot?.viewerName?.trim() || "Üye",
+        });
       }
     } catch {
       setPrivateRequestsFeedback("Talep güncellenemedi.");
     } finally {
       setPrivateRequestDecidingId(null);
     }
-  }, []);
+  }, [displayName, chatIdentity.displayName]);
 
   useEffect(() => {
     if (activeTab !== "gift" || hasGiftCatalogLoaded) {
@@ -1650,8 +1690,13 @@ export default function StudioPage() {
                 <button className="rounded-2xl bg-orange-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
                   HEDİYE LİSTESİ
                 </button>
-                <button className="rounded-2xl bg-pink-400 px-4 py-2 text-sm font-black text-white transition hover:bg-pink-300">
-                  MESAJLARIM
+                <button
+                  type="button"
+                  data-testid="studio-dm-open-button"
+                  onClick={() => setShowDmOverlay(true)}
+                  className="rounded-2xl bg-pink-400 px-4 py-2 text-sm font-black text-white transition hover:bg-pink-300"
+                >
+                  Mesajlarım
                 </button>
               </div>
             </>
@@ -1976,6 +2021,33 @@ export default function StudioPage() {
           </div>
         </aside>
       </section>
+
+      {showDmOverlay ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-3 py-6"
+          data-testid="studio-dm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mesajlarım"
+        >
+          <div className="flex max-h-[min(90dvh,920px)] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-pink-100 bg-white shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3 sm:px-5">
+              <h2 className="text-base font-black text-zinc-900 sm:text-lg">Mesajlarım</h2>
+              <button
+                type="button"
+                data-testid="studio-dm-close-button"
+                onClick={() => setShowDmOverlay(false)}
+                className="rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-bold text-zinc-700 transition hover:bg-zinc-50"
+              >
+                Kapat
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+              <DirectMessagesPanel currentUserRole="streamer" banned={isBanned} compact />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -6,6 +6,8 @@ import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 export type DirectMessagesPanelProps = {
   currentUserRole: "viewer" | "streamer";
   initialTargetUserId?: string;
+  /** Optional display hint when starting a new chat (e.g. streamer name from room state). */
+  initialTargetDisplayName?: string;
   compact?: boolean;
   banned?: boolean;
 };
@@ -40,15 +42,25 @@ function roleLabel(role: string) {
   return "Üye";
 }
 
+function draftPeerSubtitle(currentUserRole: "viewer" | "streamer", hint?: string) {
+  const trimmed = hint?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  return currentUserRole === "viewer" ? "Yayıncıya mesaj" : "Üyeye mesaj";
+}
+
 export function DirectMessagesPanel({
   currentUserRole,
   initialTargetUserId,
+  initialTargetDisplayName,
   compact,
   banned = false,
 }: DirectMessagesPanelProps) {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draftReceiverId, setDraftReceiverId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DmMessage[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -60,6 +72,10 @@ export function DirectMessagesPanel({
   const listBottomRef = useRef<HTMLDivElement | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
+  const draftReceiverIdRef = useRef<string | null>(null);
+  draftReceiverIdRef.current = draftReceiverId;
+  const appliedInitialTargetIdRef = useRef<string | null>(null);
+  const conversationListFirstLoadRef = useRef(true);
 
   const padding = compact ? "p-3" : "p-4";
 
@@ -73,7 +89,9 @@ export function DirectMessagesPanel({
 
   const loadConversations = useCallback(async () => {
     setListError("");
-    setListLoading(true);
+    if (conversationListFirstLoadRef.current) {
+      setListLoading(true);
+    }
     try {
       const token = await fetchAccessToken();
       if (!token) {
@@ -100,7 +118,10 @@ export function DirectMessagesPanel({
       setConversations([]);
       setListError("Sohbetler yüklenemedi.");
     } finally {
-      setListLoading(false);
+      if (conversationListFirstLoadRef.current) {
+        setListLoading(false);
+        conversationListFirstLoadRef.current = false;
+      }
     }
   }, [fetchAccessToken]);
 
@@ -129,7 +150,22 @@ export function DirectMessagesPanel({
           setMessagesError(payload.message ?? "Mesajlar yüklenemedi.");
           return;
         }
-        setMessages(payload.messages ?? []);
+        const fetched = payload.messages ?? [];
+        setMessages((prev) => {
+          if (prev.length === 0) {
+            return fetched;
+          }
+          const merged = new Map<string, DmMessage>();
+          for (const m of prev) {
+            merged.set(m.id, m);
+          }
+          for (const m of fetched) {
+            merged.set(m.id, m);
+          }
+          return Array.from(merged.values()).sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+          );
+        });
       } catch {
         setMessages([]);
         setMessagesError("Mesajlar yüklenemedi.");
@@ -162,14 +198,42 @@ export function DirectMessagesPanel({
   }, [loadConversations]);
 
   useEffect(() => {
-    if (!initialTargetUserId || conversations.length === 0) {
+    if (!initialTargetUserId) {
+      setDraftReceiverId(null);
+      appliedInitialTargetIdRef.current = null;
+      return;
+    }
+    appliedInitialTargetIdRef.current = null;
+  }, [initialTargetUserId]);
+
+  useEffect(() => {
+    if (!initialTargetUserId || listLoading) {
+      return;
+    }
+    if (appliedInitialTargetIdRef.current === initialTargetUserId) {
       return;
     }
     const match = conversations.find((c) => c.otherUserId === initialTargetUserId);
     if (match) {
       setSelectedId(match.id);
+      setDraftReceiverId(null);
+    } else {
+      setSelectedId(null);
+      setDraftReceiverId(initialTargetUserId);
     }
-  }, [initialTargetUserId, conversations]);
+    appliedInitialTargetIdRef.current = initialTargetUserId;
+  }, [initialTargetUserId, listLoading]);
+
+  useEffect(() => {
+    if (!draftReceiverId || listLoading) {
+      return;
+    }
+    const match = conversations.find((c) => c.otherUserId === draftReceiverId);
+    if (match) {
+      setSelectedId(match.id);
+      setDraftReceiverId(null);
+    }
+  }, [conversations, draftReceiverId, listLoading]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -205,6 +269,15 @@ export function DirectMessagesPanel({
             const uid = user?.id;
             if (!uid || (senderId !== uid && receiverId !== uid)) {
               return;
+            }
+            const draft = draftReceiverIdRef.current;
+            if (selectedIdRef.current === null && draft) {
+              const other = senderId === uid ? receiverId : senderId;
+              if (other === draft) {
+                selectedIdRef.current = conversationId;
+                setSelectedId(conversationId);
+                setDraftReceiverId(null);
+              }
             }
             const incoming: DmMessage = {
               id,
@@ -244,8 +317,15 @@ export function DirectMessagesPanel({
     [conversations, selectedId],
   );
 
+  const isNewConversationUi = Boolean(draftReceiverId && !selectedConversation);
+
+  const draftSubtitle = useMemo(
+    () => draftPeerSubtitle(currentUserRole, initialTargetDisplayName),
+    [currentUserRole, initialTargetDisplayName],
+  );
+
   async function handleSend() {
-    if (banned || !selectedConversation) {
+    if (banned) {
       return;
     }
     const trimmed = sendBody.trim();
@@ -253,6 +333,12 @@ export function DirectMessagesPanel({
       setSendError("Mesaj boş olamaz.");
       return;
     }
+
+    const receiverId = selectedConversation?.otherUserId ?? draftReceiverId;
+    if (!receiverId) {
+      return;
+    }
+
     setSendBusy(true);
     setSendError("");
     try {
@@ -268,18 +354,40 @@ export function DirectMessagesPanel({
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          receiverId: selectedConversation.otherUserId,
+          receiverId,
           body: trimmed,
         }),
       });
-      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: unknown;
+      };
       if (!response.ok || !payload.ok) {
-        setSendError(payload.message ?? "Mesaj gönderilemedi.");
+        const msg = payload.message;
+        setSendError(typeof msg === "string" ? msg : "Mesaj gönderilemedi.");
         return;
       }
+      const okPayload = payload as typeof payload & {
+        message?: {
+          id?: string;
+          conversationId?: string;
+        };
+      };
+      const sent = okPayload.message;
+      const newConversationId = typeof sent?.conversationId === "string" ? sent.conversationId : null;
+
       setSendBody("");
-      void loadMessages(selectedConversation.id);
+      setDraftReceiverId(null);
+      if (newConversationId) {
+        selectedIdRef.current = newConversationId;
+        setSelectedId(newConversationId);
+      }
       void loadConversations();
+      if (newConversationId) {
+        void loadMessages(newConversationId);
+      } else if (selectedConversation) {
+        void loadMessages(selectedConversation.id);
+      }
     } catch {
       setSendError("Mesaj gönderilemedi.");
     } finally {
@@ -315,7 +423,10 @@ export function DirectMessagesPanel({
                 <button
                   type="button"
                   data-testid="dm-conversation-row"
-                  onClick={() => setSelectedId(c.id)}
+                  onClick={() => {
+                    setDraftReceiverId(null);
+                    setSelectedId(c.id);
+                  }}
                   className={[
                     "w-full rounded-xl border px-3 py-2 text-left text-sm transition",
                     active
@@ -351,10 +462,51 @@ export function DirectMessagesPanel({
           Mesajlaşmalarda telefon numarası, email, sosyal medya hesabı vb. paylaşmak yasaktır.
         </p>
 
-        {!selectedConversation ? (
+        {!selectedConversation && !isNewConversationUi ? (
           <p data-testid="dm-empty-state" className="mt-6 flex-1 text-sm text-slate-600">
             Bir sohbet seçildiğinde mesajlar burada görünecek.
           </p>
+        ) : null}
+
+        {isNewConversationUi ? (
+          <div data-testid="dm-new-conversation-state" className="mt-3 flex min-h-0 flex-1 flex-col">
+            <header className="border-b border-cyan-100 pb-2">
+              <p className="text-sm font-semibold text-indigo-800">Yeni mesaj</p>
+              <p className="text-xs text-slate-500">{draftSubtitle}</p>
+            </header>
+
+            <div data-testid="dm-message-list" className="mt-3 max-h-[320px] flex-1 space-y-2 overflow-y-auto pr-1">
+              <div ref={listBottomRef} />
+            </div>
+
+            <div className="mt-3 border-t border-cyan-100 pt-3">
+              {sendError ? <p className="mb-2 text-xs text-rose-600">{sendError}</p> : null}
+              {banned ? (
+                <p className="text-xs text-rose-700">Hesabınız kısıtlanmıştır; mesaj gönderemezsiniz.</p>
+              ) : (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <textarea
+                    data-testid="dm-message-input"
+                    value={sendBody}
+                    onChange={(e) => setSendBody(e.target.value)}
+                    maxLength={1000}
+                    rows={compact ? 2 : 3}
+                    placeholder="Mesajını yaz..."
+                    className="min-h-[72px] w-full flex-1 resize-none rounded-2xl border border-cyan-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-300"
+                  />
+                  <button
+                    type="button"
+                    data-testid="dm-send-button"
+                    disabled={sendBusy || !sendBody.trim()}
+                    onClick={() => void handleSend()}
+                    className="rounded-2xl bg-pink-400 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-pink-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {sendBusy ? "Gönderiliyor..." : "Gönder"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         ) : null}
 
         {selectedConversation ? (

@@ -17,6 +17,7 @@ import {
   LIVE_ROOMS_CHANGED_EVENT,
 } from "@/lib/supabase-browser";
 import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
+import { DirectMessagesPanel } from "@/components/dm/DirectMessagesPanel";
 import { usePrivateRoomSignaling } from "@/hooks/use-private-room-signaling";
 
 type RoomRow = {
@@ -169,6 +170,22 @@ function getStreamerName(room: RoomRow | null, profile: ProfileRow | null) {
   return profileName || roomTitle || "Yayinci";
 }
 
+function withPrivateSessionDisplayNames(
+  session: PrivateSessionSummary | null,
+  fallbacks: { streamerName: string; viewerName: string },
+): PrivateSessionSummary | null {
+  if (!session) {
+    return null;
+  }
+  const streamerName = session.streamerName?.trim() || fallbacks.streamerName;
+  const viewerName = session.viewerName?.trim() || fallbacks.viewerName;
+  return {
+    ...session,
+    streamerName,
+    viewerName,
+  };
+}
+
 function getPresenceRoleLabel(role: string) {
   if (role === "streamer") {
     return "Yayinci";
@@ -264,6 +281,7 @@ export default function ViewerRoomClientPage() {
   const [privateRequestFeedback, setPrivateRequestFeedback] = useState<string | null>(null);
   const [isPrivateRequestPending, setIsPrivateRequestPending] = useState(false);
   const [showInsufficientMinutesModal, setShowInsufficientMinutesModal] = useState(false);
+  const [showDmOverlay, setShowDmOverlay] = useState(false);
   const [activePrivateSession, setActivePrivateSession] = useState<PrivateSessionSummary | null>(null);
   const [privateSessionResult, setPrivateSessionResult] = useState<string | null>(null);
   const [privateSessionError, setPrivateSessionError] = useState<string | null>(null);
@@ -1124,7 +1142,12 @@ export default function ViewerRoomClientPage() {
         return;
       }
       const nextSession = payload.session && payload.session.roomId === roomId ? payload.session : null;
-      setActivePrivateSession(nextSession);
+      setActivePrivateSession(
+        withPrivateSessionDisplayNames(nextSession, {
+          streamerName: getStreamerName(state.room, state.ownerProfile),
+          viewerName: state.userDisplayName?.trim() || "Üye",
+        }),
+      );
     } catch {
       // keep stale value on transient errors
     }
@@ -1209,7 +1232,12 @@ export default function ViewerRoomClientPage() {
         setPrivateRequestFeedback(payload.message || "Özel oda başlatılamadı.");
         return;
       }
-      setActivePrivateSession(payload.session ?? null);
+      setActivePrivateSession(
+        withPrivateSessionDisplayNames(payload.session ?? null, {
+          streamerName: getStreamerName(state.room, state.ownerProfile),
+          viewerName: state.userDisplayName?.trim() || "Üye",
+        }),
+      );
       setPrivateRequestFeedback("Özel oda aktif.");
     } catch {
       setPrivateRequestFeedback("Özel oda başlatılamadı.");
@@ -1477,8 +1505,19 @@ export default function ViewerRoomClientPage() {
             <button className="rounded-2xl bg-orange-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
               HEDIYE LISTESI
             </button>
-            <button className="rounded-2xl bg-pink-400 px-4 py-2 text-sm font-black text-white transition hover:bg-pink-300">
-              MESAJLARIM
+            <button
+              type="button"
+              data-testid="room-dm-open-button"
+              disabled={!state.room?.owner_id}
+              onClick={() => {
+                if (!state.room?.owner_id) {
+                  return;
+                }
+                setShowDmOverlay(true);
+              }}
+              className="rounded-2xl bg-pink-400 px-4 py-2 text-sm font-black text-white transition hover:bg-pink-300 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            >
+              Mesaj Gönder
             </button>
             <button
               type="button"
@@ -1745,6 +1784,53 @@ export default function ViewerRoomClientPage() {
           </div>
         </aside>
       </section>
+      {showDmOverlay ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-3 py-6"
+          data-testid="room-dm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Yayıncıya mesaj"
+        >
+          <div className="flex max-h-[min(90dvh,920px)] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-pink-100 bg-white shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3 sm:px-5">
+              <h2 className="text-base font-black text-zinc-900 sm:text-lg">Yayıncıya Mesaj</h2>
+              <button
+                type="button"
+                data-testid="room-dm-close-button"
+                onClick={() => setShowDmOverlay(false)}
+                className="rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-bold text-zinc-700 transition hover:bg-zinc-50"
+              >
+                Kapat
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+              {!state.isLoggedIn ? (
+                <div className="rounded-2xl border border-pink-100 bg-pink-50/50 p-5 text-center">
+                  <p className="text-sm font-semibold text-zinc-800">Mesaj göndermek için giriş yapmalısın.</p>
+                  <Link
+                    href="/login"
+                    className="mt-4 inline-flex rounded-full bg-pink-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-pink-400"
+                  >
+                    Üye girişi
+                  </Link>
+                </div>
+              ) : !state.room?.owner_id ? (
+                <p className="text-sm text-zinc-600">Yayıncı bilgisi şu an kullanılamıyor.</p>
+              ) : (
+                <DirectMessagesPanel
+                  currentUserRole="viewer"
+                  initialTargetUserId={state.room.owner_id}
+                  initialTargetDisplayName={streamerName}
+                  banned={isViewerBanned}
+                  compact
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {showInsufficientMinutesModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
           <section className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" data-testid="insufficient-minutes-modal">
