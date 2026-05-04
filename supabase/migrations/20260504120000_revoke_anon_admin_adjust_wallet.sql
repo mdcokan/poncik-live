@@ -1,3 +1,19 @@
 -- Align with other admin RPCs: do not expose admin-only RPCs to anon role.
-revoke all on function public.admin_adjust_wallet(uuid, integer, text) from anon;
-revoke all on function public.admin_close_live_room(uuid) from anon;
+-- Signature-safe: revokes for every overload that exists; no-op if a function is absent.
+do $$
+declare
+  fn record;
+begin
+  for fn in
+    select p.oid::regprocedure as fn_signature
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname in (
+        'admin_adjust_wallet',
+        'admin_close_live_room'
+      )
+  loop
+    execute format('revoke all on function %s from anon', fn.fn_signature);
+  end loop;
+end $$;
