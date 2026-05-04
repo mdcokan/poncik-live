@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AdminAccessState } from "@/app/admin/_components/admin-access-state";
 import { AdminLayout } from "@/app/admin/_components/admin-layout";
@@ -325,6 +326,15 @@ export default function AdminFinancePage() {
       description="Gelir, gider, dakika hareketleri ve yayinci kazanclari."
       onLogout={signOut}
     >
+      <section className="rounded-3xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-violet-50 p-4 shadow-sm">
+        <Link
+          href="/admin/private-rooms"
+          className="text-sm font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900"
+        >
+          Özel oda raporlarını görüntüle
+        </Link>
+      </section>
+
       <section className="grid grid-cols-1 gap-3 md:grid-cols-4">
         <article className="rounded-3xl bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Toplam dakika bakiyesi</p>

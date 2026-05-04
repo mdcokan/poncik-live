@@ -18,6 +18,7 @@ const menuItems = [
   { label: "Yayincilar", href: "/admin/streamers" },
   { label: "Canli Yayinlar", href: "/admin/live" },
   { label: "Kazanc / Finans", href: "/admin/finance" },
+  { label: "Özel Oda Raporları", href: "/admin/private-rooms" },
   { label: "Dakika / Sure Paketleri", href: "/admin/packages" },
   { label: "Mesajlar", href: "/admin/messages" },
   { label: "Sikayetler", href: "/admin/reports" },
@@ -40,7 +41,10 @@ export function AdminLayout({ title, description, onLogout, children }: AdminLay
 
           <nav className="mt-3 space-y-2">
             {menuItems.map((item) => {
-              const active = pathname === item.href;
+              const active =
+                item.href === "/admin"
+                  ? pathname === "/admin"
+                  : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
               return (
                 <Link
