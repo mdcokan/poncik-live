@@ -9,7 +9,7 @@ import {
   type RoomPresenceUser,
   upsertRoomPresence,
 } from "@/lib/room-presence";
-import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
+import { fetchRoomMessages, isRoomMessageAtOrAfterLiveStart, type RoomMessage } from "@/lib/room-messages";
 import { fetchRoomGiftEvents, type RoomGiftEvent } from "@/lib/gift-transactions";
 import {
   getSupabaseBrowserClient,
@@ -28,6 +28,7 @@ type RoomRow = {
   title: string | null;
   status: string;
   owner_id: string;
+  liveStartedAt?: string | null;
 };
 
 type ProfileRow = {
@@ -159,6 +160,7 @@ type PublicRoomStateResponse = {
   ownerId: string;
   streamerName: string;
   isLive: boolean;
+  liveStartedAt?: string | null;
 };
 
 type RoomModerationRow = {
@@ -296,6 +298,7 @@ export default function ViewerRoomClientPage() {
     enabled: Boolean(activePrivateSession?.sessionId),
   });
   const messageIdsRef = useRef(new Set<string>());
+  const viewerChatEpochRef = useRef<string>("");
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -303,6 +306,7 @@ export default function ViewerRoomClientPage() {
   const latestGiftEventIdRef = useRef<string | null>(null);
 
   const isLive = state.room?.status === "live";
+  const viewerLiveStartedAt = state.room?.liveStartedAt ?? null;
   const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending || isRoomMuted || isRoomBanned || isRoomKicked;
   const isGiftSendDisabled = !state.isLoggedIn || !isLive || isViewerBanned || isRoomBanned || isRoomKicked || Boolean(pendingGiftId);
   const isPrivateRequestDisabled = !isLive || isViewerBanned || isRoomBanned || isRoomKicked || isPrivateRequestPending;
@@ -324,16 +328,22 @@ export default function ViewerRoomClientPage() {
 
   const mergeMessages = useCallback(
     (incomingMessages: RoomMessage[]) => {
-      if (!incomingMessages.length) {
+      const filteredIncoming = incomingMessages.filter((message) =>
+        isRoomMessageAtOrAfterLiveStart(message.createdAt, viewerLiveStartedAt),
+      );
+      if (!filteredIncoming.length) {
         return;
       }
 
       setMessages((previousMessages) => {
         const mergedMap = new Map<string, RoomMessage>();
         for (const message of previousMessages) {
+          if (!isRoomMessageAtOrAfterLiveStart(message.createdAt, viewerLiveStartedAt)) {
+            continue;
+          }
           mergedMap.set(message.id, message);
         }
-        for (const message of incomingMessages) {
+        for (const message of filteredIncoming) {
           mergedMap.set(message.id, message);
         }
 
@@ -345,7 +355,7 @@ export default function ViewerRoomClientPage() {
         return nextMessages;
       });
     },
-    [setMessages],
+    [setMessages, viewerLiveStartedAt],
   );
 
   const refreshMessages = useCallback(async () => {
@@ -356,14 +366,14 @@ export default function ViewerRoomClientPage() {
     setIsRefreshingMessages(true);
     try {
       const supabase = getSupabaseBrowserClient();
-      const fetchedMessages = await fetchRoomMessages(roomId, 50, supabase);
+      const fetchedMessages = await fetchRoomMessages(roomId, 50, supabase, viewerLiveStartedAt);
       setMessages(fetchedMessages);
       messageIdsRef.current = new Set(fetchedMessages.map((message) => message.id));
       scrollMessagesToBottom();
     } finally {
       setIsRefreshingMessages(false);
     }
-  }, [isLive, isRefreshingMessages, roomId, scrollMessagesToBottom]);
+  }, [isLive, isRefreshingMessages, roomId, scrollMessagesToBottom, viewerLiveStartedAt]);
 
   const scheduleRefreshMessages = useCallback(
     (delayMs = 150) => {
@@ -582,6 +592,7 @@ export default function ViewerRoomClientPage() {
               title: roomState.title,
               status: roomState.status,
               owner_id: roomState.ownerId,
+              liveStartedAt: roomState.liveStartedAt ?? null,
             },
             ownerProfile: {
               id: roomState.ownerId,
@@ -632,6 +643,7 @@ export default function ViewerRoomClientPage() {
               title: roomState.title,
               status: roomState.status,
               owner_id: roomState.ownerId,
+              liveStartedAt: roomState.liveStartedAt ?? null,
             },
             ownerProfile: {
               id: roomState.ownerId,
@@ -717,11 +729,19 @@ export default function ViewerRoomClientPage() {
 
   useEffect(() => {
     if (!roomId || !isLive) {
+      viewerChatEpochRef.current = "";
       setMessages([]);
+      messageIdsRef.current = new Set();
       return;
     }
+    const epoch = `${roomId}:${viewerLiveStartedAt ?? ""}`;
+    if (viewerChatEpochRef.current !== epoch) {
+      viewerChatEpochRef.current = epoch;
+      setMessages([]);
+      messageIdsRef.current = new Set();
+    }
     void refreshMessages();
-  }, [isLive, refreshMessages, roomId]);
+  }, [isLive, refreshMessages, roomId, viewerLiveStartedAt]);
 
   useEffect(() => {
     if (!roomId || !isLive) {
@@ -1002,7 +1022,11 @@ export default function ViewerRoomClientPage() {
         .select("id, room_id, sender_id, body, created_at")
         .maybeSingle();
 
-      if (insertedMessage && !messageIdsRef.current.has(insertedMessage.id)) {
+      if (
+        insertedMessage &&
+        !messageIdsRef.current.has(insertedMessage.id) &&
+        isRoomMessageAtOrAfterLiveStart(insertedMessage.created_at, viewerLiveStartedAt)
+      ) {
         mergeMessages([
           {
             id: insertedMessage.id,
@@ -1687,7 +1711,7 @@ export default function ViewerRoomClientPage() {
                 </div>
               )
             ) : (
-              <div>
+              <div data-testid="room-chat-message-list">
                 <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
@@ -1727,7 +1751,11 @@ export default function ViewerRoomClientPage() {
                 ) : (
                   <div className="space-y-3">
                     {messages.map((message) => (
-                      <article key={message.id} className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm">
+                      <article
+                        key={message.id}
+                        data-testid="room-chat-message"
+                        className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm"
+                      >
                         <div className="flex items-center justify-between gap-2 text-xs">
                           <span className="font-bold text-pink-600">{message.senderName}</span>
                           <span className="text-zinc-400">
@@ -1758,6 +1786,7 @@ export default function ViewerRoomClientPage() {
           <div className="shrink-0 border-t border-zinc-200 p-4">
             <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
               <input
+                data-testid="room-chat-input"
                 value={chatBody}
                 maxLength={500}
                 onChange={(event) => setChatBody(event.target.value)}
@@ -1773,6 +1802,7 @@ export default function ViewerRoomClientPage() {
               />
               <button
                 type="button"
+                data-testid="room-chat-send-button"
                 onClick={() => {
                   void handleSendMessage();
                 }}

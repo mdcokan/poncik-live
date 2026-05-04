@@ -8,7 +8,7 @@ import {
   type RoomPresenceUser,
   upsertRoomPresence,
 } from "@/lib/room-presence";
-import { fetchRoomMessages, type RoomMessage } from "@/lib/room-messages";
+import { fetchRoomMessages, isRoomMessageAtOrAfterLiveStart, type RoomMessage } from "@/lib/room-messages";
 import { fetchRoomGiftEvents, type RoomGiftEvent } from "@/lib/gift-transactions";
 import {
   LIVE_ROOMS_BROADCAST_CHANNEL,
@@ -28,6 +28,7 @@ type StudioRoom = {
   id: string;
   title: string;
   status: RoomStatus;
+  liveStartedAt: string | null;
 };
 
 type GiftCatalogItem = {
@@ -227,6 +228,7 @@ export default function StudioPage() {
   });
   const roomMessagesRef = useRef<HTMLDivElement | null>(null);
   const messageIdsRef = useRef(new Set<string>());
+  const roomChatEpochRef = useRef<string>("");
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const giftOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -294,7 +296,7 @@ export default function StudioPage() {
 
         const { data: rooms, error: roomsError } = await supabase
           .from("rooms")
-          .select("id, title, status, updated_at")
+          .select("id, title, status, updated_at, live_started_at")
           .eq("owner_id", user.id)
           .order("updated_at", { ascending: false })
           .limit(5);
@@ -310,6 +312,7 @@ export default function StudioPage() {
             id: lastRoom.id,
             title: lastRoom.title,
             status: lastRoom.status as RoomStatus,
+            liveStartedAt: (lastRoom as { live_started_at?: string | null }).live_started_at ?? null,
           });
         }
       } catch (error) {
@@ -335,16 +338,23 @@ export default function StudioPage() {
 
   const mergeMessages = useCallback(
     (incomingMessages: RoomMessage[]) => {
-      if (!incomingMessages.length) {
+      const liveStartedAt = activeRoom?.liveStartedAt ?? null;
+      const filteredIncoming = incomingMessages.filter((roomMessage) =>
+        isRoomMessageAtOrAfterLiveStart(roomMessage.createdAt, liveStartedAt),
+      );
+      if (!filteredIncoming.length) {
         return;
       }
 
       setRoomMessages((previousMessages) => {
         const mergedMap = new Map<string, RoomMessage>();
         for (const roomMessage of previousMessages) {
+          if (!isRoomMessageAtOrAfterLiveStart(roomMessage.createdAt, liveStartedAt)) {
+            continue;
+          }
           mergedMap.set(roomMessage.id, roomMessage);
         }
-        for (const roomMessage of incomingMessages) {
+        for (const roomMessage of filteredIncoming) {
           mergedMap.set(roomMessage.id, roomMessage);
         }
 
@@ -355,7 +365,7 @@ export default function StudioPage() {
         return nextMessages;
       });
     },
-    [setRoomMessages],
+    [activeRoom?.liveStartedAt, setRoomMessages],
   );
 
   const refreshMessages = useCallback(async () => {
@@ -366,14 +376,14 @@ export default function StudioPage() {
     setChatRefreshing(true);
     try {
       const supabase = getSupabase();
-      const fetchedMessages = await fetchRoomMessages(activeRoom.id, 50, supabase);
+      const fetchedMessages = await fetchRoomMessages(activeRoom.id, 50, supabase, activeRoom.liveStartedAt);
       setRoomMessages(fetchedMessages);
       messageIdsRef.current = new Set(fetchedMessages.map((roomMessage) => roomMessage.id));
       scrollMessagesToBottom();
     } finally {
       setChatRefreshing(false);
     }
-  }, [activeRoom?.id, activeRoom?.status, chatRefreshing, scrollMessagesToBottom]);
+  }, [activeRoom?.id, activeRoom?.liveStartedAt, activeRoom?.status, chatRefreshing, scrollMessagesToBottom]);
 
   const scheduleRefreshMessages = useCallback(
     (delayMs = 150) => {
@@ -514,17 +524,20 @@ export default function StudioPage() {
             updated_at: new Date().toISOString(),
           })
           .eq("id", existingRoom.id)
-          .select("id, title, status")
+          .select("id, title, status, live_started_at")
           .single();
 
         if (updateRoomError || !updatedRoom) {
           throw updateRoomError ?? new Error("Oda güncellenemedi.");
         }
 
+        setRoomMessages([]);
+        messageIdsRef.current = new Set();
         setActiveRoom({
           id: updatedRoom.id,
           title: updatedRoom.title,
           status: updatedRoom.status as RoomStatus,
+          liveStartedAt: (updatedRoom as { live_started_at?: string | null }).live_started_at ?? null,
         });
 
         try {
@@ -547,17 +560,20 @@ export default function StudioPage() {
             title: finalTitle,
             status: "live",
           })
-          .select("id, title, status")
+          .select("id, title, status, live_started_at")
           .single();
 
         if (insertRoomError || !insertedRoom) {
           throw insertRoomError ?? new Error("Oda oluşturulamadı.");
         }
 
+        setRoomMessages([]);
+        messageIdsRef.current = new Set();
         setActiveRoom({
           id: insertedRoom.id,
           title: insertedRoom.title,
           status: insertedRoom.status as RoomStatus,
+          liveStartedAt: (insertedRoom as { live_started_at?: string | null }).live_started_at ?? null,
         });
 
         try {
@@ -683,11 +699,19 @@ export default function StudioPage() {
 
   useEffect(() => {
     if (!activeRoom?.id || activeRoom.status !== "live") {
+      roomChatEpochRef.current = "";
       setRoomMessages([]);
+      messageIdsRef.current = new Set();
       return;
     }
+    const epoch = `${activeRoom.id}:${activeRoom.status}:${activeRoom.liveStartedAt ?? ""}`;
+    if (roomChatEpochRef.current !== epoch) {
+      roomChatEpochRef.current = epoch;
+      setRoomMessages([]);
+      messageIdsRef.current = new Set();
+    }
     void refreshMessages();
-  }, [activeRoom?.id, activeRoom?.status, refreshMessages]);
+  }, [activeRoom?.id, activeRoom?.liveStartedAt, activeRoom?.status, refreshMessages]);
 
   useEffect(() => {
     if (!activeRoom?.id || activeRoom.status !== "live") {
@@ -901,7 +925,11 @@ export default function StudioPage() {
         .select("id, room_id, sender_id, body, created_at")
         .maybeSingle();
 
-      if (insertedMessage && !messageIdsRef.current.has(insertedMessage.id)) {
+      if (
+        insertedMessage &&
+        !messageIdsRef.current.has(insertedMessage.id) &&
+        isRoomMessageAtOrAfterLiveStart(insertedMessage.created_at, activeRoom?.liveStartedAt)
+      ) {
         mergeMessages([
           {
             id: insertedMessage.id,
@@ -1786,7 +1814,7 @@ export default function StudioPage() {
                 </div>
               )
             ) : (
-              <div>
+              <div data-testid="room-chat-message-list">
                 {activePrivateSession ? (
                   <PrivateRoomSessionPanel
                     sessionId={activePrivateSession.sessionId}
@@ -1971,6 +1999,7 @@ export default function StudioPage() {
                     {roomMessages.map((roomMessage) => (
                       <article
                         key={roomMessage.id}
+                        data-testid="room-chat-message"
                         className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm"
                       >
                         <div className="flex items-center justify-between gap-2 text-xs">
@@ -1994,6 +2023,7 @@ export default function StudioPage() {
           <div className="shrink-0 border-t border-zinc-200 p-4">
             <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
               <input
+                data-testid="room-chat-input"
                 value={chatBody}
                 maxLength={500}
                 onChange={(event) => setChatBody(event.target.value)}
@@ -2009,6 +2039,7 @@ export default function StudioPage() {
               />
               <button
                 type="button"
+                data-testid="room-chat-send-button"
                 onClick={() => {
                   void handleSendChatMessage();
                 }}

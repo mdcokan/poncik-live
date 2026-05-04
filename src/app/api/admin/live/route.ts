@@ -15,6 +15,7 @@ type RoomRow = {
   owner_id: string;
   updated_at: string | null;
   created_at: string | null;
+  live_started_at?: string | null;
 };
 
 type PresenceRow = {
@@ -147,7 +148,7 @@ export async function GET(request: Request) {
 
     const { data: roomRows, error: roomError } = await supabase
       .from("rooms")
-      .select("id, title, status, owner_id, updated_at, created_at")
+      .select("id, title, status, owner_id, updated_at, created_at, live_started_at")
       .eq("status", "live")
       .order("updated_at", { ascending: false })
       .limit(ROOMS_LIMIT);
@@ -161,6 +162,9 @@ export async function GET(request: Request) {
     }
 
     const roomIds = rooms.map((room) => room.id);
+    const liveStartedAtByRoomId = new Map<string, string | null>(
+      rooms.map((room) => [room.id, room.live_started_at ?? null]),
+    );
 
     const [{ data: presenceRows }, { data: messageRows }, { data: giftRows }, { data: roomMuteRows }, { data: roomBanRows }] =
       await Promise.all([
@@ -187,7 +191,15 @@ export async function GET(request: Request) {
       ]);
 
     const safePresenceRows = (presenceRows as PresenceRow[] | null) ?? [];
-    const safeMessageRows = takeLastByRoom((messageRows as MessageRow[] | null) ?? [], 3);
+    const messageRowsAll = (messageRows as MessageRow[] | null) ?? [];
+    const messageRowsForCurrentBroadcast = messageRowsAll.filter((row) => {
+      const startedAt = liveStartedAtByRoomId.get(row.room_id);
+      if (!startedAt) {
+        return true;
+      }
+      return new Date(row.created_at).getTime() >= new Date(startedAt).getTime();
+    });
+    const safeMessageRows = takeLastByRoom(messageRowsForCurrentBroadcast, 3);
     const safeGiftRows = takeLastByRoom((giftRows as GiftRow[] | null) ?? [], 3);
 
     const safeRoomMuteRows = (roomMuteRows as RoomMuteRow[] | null) ?? [];

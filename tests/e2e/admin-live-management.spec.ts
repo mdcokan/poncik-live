@@ -106,10 +106,10 @@ test("admin canlı yayınları görüp yayını kapatabilir", async ({ browser, 
       throw new Error("Uye oda id bilgisi alinamadi.");
     }
 
-    const messageInput = memberPage.getByPlaceholder(/Mesaj.*yaz/i).first();
-    await messageInput.fill(TEST_MESSAGE);
-    await memberPage.getByRole("button", { name: /g[oö]nder/i }).first().click();
-    await expect(memberPage.getByText(TEST_MESSAGE).first()).toBeVisible({ timeout: 20_000 });
+    await expect(memberPage.getByTestId("room-chat-send-button")).toBeEnabled({ timeout: 25_000 });
+    await memberPage.getByTestId("room-chat-input").fill(TEST_MESSAGE);
+    await memberPage.getByTestId("room-chat-send-button").click();
+    await expect(memberPage.getByTestId("room-chat-message-list")).toContainText(TEST_MESSAGE, { timeout: 25_000 });
 
     await login(adminPage, {
       loginPath: "/login",
