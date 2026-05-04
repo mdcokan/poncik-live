@@ -2,6 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { gotoDomWithRetry } from "./helpers/navigation";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import {
+  cleanupPrivateRoomFlow,
+  waitForFixtureMemberNoActivePrivateSession,
+  waitForMemberPrivatePanelSessionMatchesActiveApi,
+} from "./helpers/private-room-flow";
 import { ensureStreamerLive } from "./helpers/studio";
 
 const STREAMER_EMAIL = "eda@test.com";
@@ -93,6 +98,7 @@ test("private room session starts and charges member minutes", async ({ browser,
 
     await memberPage.locator(`a[href="/rooms/${roomId}"]`).first().click();
     await expect(memberPage).toHaveURL(new RegExp(`/rooms/${roomId}$`), { timeout: 20_000 });
+    await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
     const privateRequestButton = memberPage.getByTestId("private-room-request-button");
     await expect(privateRequestButton).toBeEnabled({
       timeout: 60_000,
@@ -107,6 +113,11 @@ test("private room session starts and charges member minutes", async ({ browser,
 
     await expect(streamerPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
     await expect(memberPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
+    await waitForMemberPrivatePanelSessionMatchesActiveApi(request, memberPage, 30_000);
+    const streamerSessionId = (await streamerPage.getByTestId("private-session-panel").getAttribute("data-session-id"))?.trim();
+    const memberSessionId = (await memberPage.getByTestId("private-session-panel").getAttribute("data-session-id"))?.trim();
+    expect(streamerSessionId).toBeTruthy();
+    expect(streamerSessionId).toBe(memberSessionId);
     await expect(memberPage.getByTestId("private-session-timer")).toContainText(/Geçen süre:\s*00:0[0-1]/i, { timeout: 30_000 });
     await expect(streamerPage.getByTestId("private-session-timer")).toContainText(/Geçen süre:\s*00:0[0-1]/i, { timeout: 30_000 });
     const memberPrivateSessionPanel = memberPage.getByTestId("private-session-panel");
@@ -174,7 +185,7 @@ test("private room session starts and charges member minutes", async ({ browser,
         await endBtn.click().catch(() => {});
       }
     }
-    await normalizeTestFixtures(request).catch(() => {});
+    await cleanupPrivateRoomFlow({ request });
     await adminContext.close().catch(() => {});
     await memberContext.close().catch(() => {});
     await streamerContext.close().catch(() => {});

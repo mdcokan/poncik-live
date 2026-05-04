@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { attachPrivateRoomDiagnostics } from "./helpers/private-room-diagnostics";
 import { attachWebRtcDiagnostics } from "./helpers/webrtc-diagnostics";
-import { createPrivateSessionForEdaAndVeli } from "./helpers/private-room-flow";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import { cleanupPrivateRoomFlow, createPrivateSessionForEdaAndVeli } from "./helpers/private-room-flow";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -13,7 +13,7 @@ test.describe.configure({ mode: "serial" });
 
 test("private room WebRTC foundation — offer, answer, and signaling", async ({ browser, request }, testInfo) => {
   test.setTimeout(420_000);
-  await normalizeTestFixtures(request);
+  const fixtureNormalize = await normalizeTestFixtures(request);
 
   const streamerContext = await browser.newContext();
   const memberContext = await browser.newContext();
@@ -163,7 +163,13 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
   } finally {
     if (!reachedEnd) {
       await attachWebRtcDiagnostics(testInfo, memberPage, streamerPage).catch(() => {});
-      await attachPrivateRoomDiagnostics(testInfo, { memberPage, streamerPage, request, roomId: roomId || undefined }).catch(() => {});
+      await attachPrivateRoomDiagnostics(testInfo, {
+        memberPage,
+        streamerPage,
+        request,
+        roomId: roomId || undefined,
+        normalizeSnapshot: fixtureNormalize.snapshot,
+      }).catch(() => {});
     }
     if (!streamerPage.isClosed()) {
       const stopButton = streamerPage.getByRole("button", { name: /b[ıiİI]t[ıiİI]r/i }).first();
@@ -177,7 +183,7 @@ test("private room WebRTC foundation — offer, answer, and signaling", async ({
         await endBtn.click().catch(() => {});
       }
     }
-    await normalizeTestFixtures(request).catch(() => {});
+    await cleanupPrivateRoomFlow({ request, streamerPage, memberPage });
     await memberContext.close().catch(() => {});
     await streamerContext.close().catch(() => {});
   }

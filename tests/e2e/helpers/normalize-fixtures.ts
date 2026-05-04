@@ -4,7 +4,37 @@ type NormalizeFixtureOptions = {
   viewerBalanceMinutes?: number;
 };
 
-export async function normalizeTestFixtures(request: APIRequestContext, options?: NormalizeFixtureOptions) {
+export type NormalizeFixturesSnapshot = {
+  eda: {
+    id: string;
+    role: string | null;
+    is_banned: boolean | null;
+    display_name: string | null;
+  };
+  veli: {
+    id: string;
+    role: string | null;
+    is_banned: boolean | null;
+    display_name: string | null;
+    walletBalance: number | null;
+  };
+  privateRoomCleanup: {
+    activeSessionsClosed: number;
+    pendingRequestsCancelled: number;
+    presenceRowsDeleted: number;
+    liveRoomsClosedForEda: number;
+  };
+};
+
+export type NormalizeFixturesSuccess = {
+  ok: true;
+  snapshot?: NormalizeFixturesSnapshot;
+};
+
+export async function normalizeTestFixtures(
+  request: APIRequestContext,
+  options?: NormalizeFixtureOptions,
+): Promise<NormalizeFixturesSuccess> {
   const fixtureSecret = process.env.TEST_FIXTURE_SECRET;
   const response = await request.post("/api/test/normalize-fixtures", {
     timeout: 30_000,
@@ -19,10 +49,11 @@ export async function normalizeTestFixtures(request: APIRequestContext, options?
     );
   }
 
-  const payload = (await response.json().catch(() => null)) as { ok?: boolean } | null;
-  if (!payload?.ok) {
+  const payload = (await response.json().catch(() => null)) as NormalizeFixturesSuccess | { ok?: boolean } | null;
+  if (!payload || payload.ok !== true) {
     throw new Error(
       `Fixture normalize response did not return { ok: true }. status=${response.status()} body=${JSON.stringify(payload).slice(0, 500)}`,
     );
   }
+  return payload as NormalizeFixturesSuccess;
 }

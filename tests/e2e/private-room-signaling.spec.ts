@@ -3,6 +3,11 @@ import { loginWithStabilizedAuth } from "./helpers/auth";
 import { gotoDomWithRetry } from "./helpers/navigation";
 import { attachPrivateRoomDiagnostics, extractSupabaseAccessToken } from "./helpers/private-room-diagnostics";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import {
+  cleanupPrivateRoomFlow,
+  waitForFixtureMemberNoActivePrivateSession,
+  waitForMemberPrivatePanelSessionMatchesActiveApi,
+} from "./helpers/private-room-flow";
 import { ensureStreamerLive } from "./helpers/studio";
 
 const STREAMER_EMAIL = "eda@test.com";
@@ -90,7 +95,7 @@ test.describe.configure({ mode: "serial" });
 
 test("private room signaling relays ready_ping, offer, and answer", async ({ browser, request }, testInfo) => {
   test.setTimeout(420_000);
-  await normalizeTestFixtures(request);
+  const fixtureNormalize = await normalizeTestFixtures(request);
 
   const streamerContext = await browser.newContext();
   const memberContext = await browser.newContext();
@@ -138,6 +143,7 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
 
     await memberPage.locator(`a[href="/rooms/${roomId}"]`).first().click();
     await expect(memberPage).toHaveURL(new RegExp(`/rooms/${roomId}$`), { timeout: 20_000 });
+    await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
 
     const privateRequestButton = memberPage.getByTestId("private-room-request-button");
     await expect(privateRequestButton).toBeEnabled({
@@ -157,6 +163,7 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
 
     await expect(streamerSessionPanel).toBeVisible({ timeout: 30_000 });
     await expect(memberSessionPanel).toBeVisible({ timeout: 30_000 });
+    await waitForMemberPrivatePanelSessionMatchesActiveApi(request, memberPage, 30_000);
     await expect(streamerSessionPanel.getByTestId("private-signaling-panel")).toBeVisible({ timeout: 30_000 });
     await expect(memberSessionPanel.getByTestId("private-signaling-panel")).toBeVisible({ timeout: 30_000 });
 
@@ -210,7 +217,13 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
     reachedEnd = true;
   } finally {
     if (!reachedEnd) {
-      await attachPrivateRoomDiagnostics(testInfo, { memberPage, streamerPage, request, roomId: roomId || undefined }).catch(() => {});
+      await attachPrivateRoomDiagnostics(testInfo, {
+        memberPage,
+        streamerPage,
+        request,
+        roomId: roomId || undefined,
+        normalizeSnapshot: fixtureNormalize.snapshot,
+      }).catch(() => {});
     }
     if (!streamerPage.isClosed()) {
       const stopButton = streamerPage.getByRole("button", { name: /b[ıiİI]t[ıiİI]r/i }).first();
@@ -224,7 +237,7 @@ test("private room signaling relays ready_ping, offer, and answer", async ({ bro
         await endBtn.click().catch(() => {});
       }
     }
-    await normalizeTestFixtures(request).catch(() => {});
+    await cleanupPrivateRoomFlow({ request, streamerPage, memberPage });
     await memberContext.close().catch(() => {});
     await streamerContext.close().catch(() => {});
   }

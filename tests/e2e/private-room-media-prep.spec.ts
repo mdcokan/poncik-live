@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { attachPrivateRoomDiagnostics } from "./helpers/private-room-diagnostics";
-import { createPrivateSessionForEdaAndVeli } from "./helpers/private-room-flow";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import { cleanupPrivateRoomFlow, createPrivateSessionForEdaAndVeli } from "./helpers/private-room-flow";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -81,6 +81,7 @@ test("private room media prep appears on viewer and studio", async ({ browser, r
       streamerPage,
       request,
       roomId: roomId || undefined,
+      normalizeSnapshot: fixtureNormalize.snapshot,
     }).catch(() => {});
     throw e;
   } finally {
@@ -96,7 +97,7 @@ test("private room media prep appears on viewer and studio", async ({ browser, r
         await stopButton.click().catch(() => {});
       }
     }
-    await normalizeTestFixtures(request).catch(() => {});
+    await cleanupPrivateRoomFlow({ request, streamerPage, memberPage });
     await memberContext.close().catch(() => {});
     await streamerContext.close().catch(() => {});
   }

@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { gotoDomWithRetry } from "./helpers/navigation";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import { cleanupPrivateRoomFlow } from "./helpers/private-room-flow";
 import { ensureStreamerLive } from "./helpers/studio";
 
 const STREAMER_EMAIL = "eda@test.com";
@@ -136,7 +137,7 @@ test.describe("in-room DM overlay", () => {
           await stopButton.click().catch(() => {});
         }
       }
-      await normalizeTestFixtures(request).catch(() => {});
+      await cleanupPrivateRoomFlow({ request, streamerPage, memberPage });
       await memberContext.close().catch(() => {});
       await streamerContext.close().catch(() => {});
     }

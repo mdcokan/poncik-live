@@ -1,7 +1,7 @@
 import { expect, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { attachPrivateRoomDiagnostics, extractSupabaseAccessToken } from "./private-room-diagnostics";
 import { gotoDomWithRetry } from "./navigation";
-import { normalizeTestFixtures } from "./normalize-fixtures";
+import { normalizeTestFixtures, type NormalizeFixturesSuccess } from "./normalize-fixtures";
 import { ensureStreamerLive } from "./studio";
 
 export type CreatePrivateSessionForEdaAndVeliOptions = {
@@ -21,6 +21,85 @@ export type CreatePrivateSessionForEdaAndVeliResult = {
   /** From `data-session-id` when the panel is visible. */
   sessionId: string | null;
 };
+
+export type CleanupPrivateRoomFlowOpts = {
+  request: APIRequestContext;
+  streamerPage?: Page;
+  memberPage?: Page;
+};
+
+/** Best-effort fixture reset after private-room tests (same as `normalizeTestFixtures`). */
+export async function cleanupPrivateRoomFlow(opts: CleanupPrivateRoomFlowOpts): Promise<void> {
+  await normalizeTestFixtures(opts.request).catch(() => {});
+}
+
+/**
+ * After normalize, Veli must not still see a stale active session (avoids “Özel oda aktif.” instead of a new request).
+ */
+export async function waitForMemberPrivatePanelSessionMatchesActiveApi(
+  request: APIRequestContext,
+  memberPage: Page,
+  timeoutMs = 30_000,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const token = await extractSupabaseAccessToken(memberPage);
+        const panelId =
+          (await memberPage.getByTestId("private-session-panel").getAttribute("data-session-id"))?.trim() ?? "";
+        if (!token || !panelId) {
+          return null;
+        }
+        const res = await request.get("/api/private-sessions/active", {
+          headers: { Authorization: `Bearer ${token}` },
+          failOnStatusCode: false,
+        });
+        if (!res.ok()) {
+          return null;
+        }
+        const body = (await res.json()) as { session?: { sessionId?: string } | null };
+        const apiId = body?.session?.sessionId;
+        return typeof apiId === "string" && apiId === panelId ? panelId : null;
+      },
+      {
+        timeout: timeoutMs,
+        intervals: [300, 600, 1200],
+        message: "Veli: private-session-panel data-session-id aktif oturum API ile aynı olmalı (stale oturum yok).",
+      },
+    )
+    .not.toBeNull();
+}
+
+export async function waitForFixtureMemberNoActivePrivateSession(
+  request: APIRequestContext,
+  memberPage: Page,
+  timeoutMs = 25_000,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const token = await extractSupabaseAccessToken(memberPage);
+        if (!token) {
+          return false;
+        }
+        const res = await request.get("/api/private-sessions/active", {
+          headers: { Authorization: `Bearer ${token}` },
+          failOnStatusCode: false,
+        });
+        if (!res.ok()) {
+          return false;
+        }
+        const body = (await res.json()) as { session?: { sessionId?: string } | null };
+        return body?.session == null;
+      },
+      {
+        timeout: timeoutMs,
+        intervals: [200, 400, 800, 1200],
+        message: "Veli: aktif özel oda kalmamalı (normalize + API /private-sessions/active).",
+      },
+    )
+    .toBe(true);
+}
 
 async function waitForActivePrivateSessionApi(
   request: APIRequestContext,
@@ -80,8 +159,10 @@ export async function createPrivateSessionForEdaAndVeli(
     waitRoomTimeoutMs = 60_000,
   } = opts;
 
+  let lastNormalizeSnapshot: NormalizeFixturesSuccess["snapshot"] | undefined;
   if (!skipNormalizeFixtures) {
-    await normalizeTestFixtures(request);
+    const norm = await normalizeTestFixtures(request);
+    lastNormalizeSnapshot = norm.snapshot;
   }
 
   let roomId = "";
@@ -93,6 +174,8 @@ export async function createPrivateSessionForEdaAndVeli(
     await gotoDomWithRetry(memberPage, "/member");
     await memberPage.locator(`a[href="/rooms/${roomId}"]`).first().click();
     await expect(memberPage).toHaveURL(new RegExp(`/rooms/${roomId}$`), { timeout: 20_000 });
+
+    await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
 
     const privateRequestButton = memberPage.getByTestId("private-room-request-button");
     await expect(privateRequestButton).toBeEnabled({ timeout: 60_000 });
@@ -109,6 +192,12 @@ export async function createPrivateSessionForEdaAndVeli(
     await expect(memberPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 60_000 });
     await expect(streamerPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 60_000 });
 
+    await waitForMemberPrivatePanelSessionMatchesActiveApi(request, memberPage, 30_000);
+
+    const streamerPanelId = (await streamerPage.getByTestId("private-session-panel").getAttribute("data-session-id"))?.trim();
+    const memberPanelId = (await memberPage.getByTestId("private-session-panel").getAttribute("data-session-id"))?.trim();
+    expect(streamerPanelId).toBe(memberPanelId);
+
     const sessionIdMember = await memberPage.getByTestId("private-session-panel").getAttribute("data-session-id");
     const sessionIdStreamer = await streamerPage.getByTestId("private-session-panel").getAttribute("data-session-id");
     const sessionId = sessionIdMember?.trim() || sessionIdStreamer?.trim() || null;
@@ -121,6 +210,7 @@ export async function createPrivateSessionForEdaAndVeli(
         streamerPage,
         request,
         roomId: roomId || undefined,
+        normalizeSnapshot: lastNormalizeSnapshot,
       }).catch(() => {});
     }
     throw e;

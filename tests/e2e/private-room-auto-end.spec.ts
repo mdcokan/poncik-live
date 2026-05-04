@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import { cleanupPrivateRoomFlow, waitForFixtureMemberNoActivePrivateSession } from "./helpers/private-room-flow";
 import { ensureStreamerLive } from "./helpers/studio";
 
 const STREAMER_EMAIL = "eda@test.com";
@@ -50,6 +51,7 @@ test("private room auto ends when member balance depletes", async ({ browser, re
     );
 
     await memberPage.goto(`/rooms/${roomId}`);
+    await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
     await memberPage.getByTestId("private-room-request-button").click();
     await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
 
@@ -112,7 +114,7 @@ test("private room auto ends when member balance depletes", async ({ browser, re
         await endBtn.click().catch(() => {});
       }
     }
-    await normalizeTestFixtures(request).catch(() => {});
+    await cleanupPrivateRoomFlow({ request, streamerPage, memberPage });
     await memberContext.close().catch(() => {});
     await streamerContext.close().catch(() => {});
   }

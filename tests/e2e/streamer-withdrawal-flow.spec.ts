@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { waitForLiveRoomByStreamerName } from "./helpers/live-room";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import { cleanupPrivateRoomFlow, waitForFixtureMemberNoActivePrivateSession } from "./helpers/private-room-flow";
 
 const STREAMER_EMAIL = "eda@test.com";
 const MEMBER_EMAIL = "veli@test.com";
@@ -105,6 +106,7 @@ test("streamer withdrawal request flow works end-to-end", async ({ browser, requ
     async function completePrivateSession() {
       await streamerPage.goto("/studio");
       await memberPage.goto(`/rooms/${roomId}`);
+      await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
       await memberPage.getByTestId("private-room-request-button").click();
       await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
       await expect(streamerPage.getByTestId("accept-private-request-button").first()).toBeVisible({ timeout: 25_000 });
@@ -211,7 +213,7 @@ test("streamer withdrawal request flow works end-to-end", async ({ browser, requ
         await endButton.click().catch(() => {});
       }
     }
-    await normalizeTestFixtures(request).catch(() => {});
+    await cleanupPrivateRoomFlow({ request, streamerPage, memberPage });
     await adminContext.close().catch(() => {});
     await memberContext.close().catch(() => {});
     await streamerContext.close().catch(() => {});

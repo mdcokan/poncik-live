@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { loginWithStabilizedAuth } from "./helpers/auth";
 import { normalizeTestFixtures } from "./helpers/normalize-fixtures";
+import {
+  cleanupPrivateRoomFlow,
+  waitForFixtureMemberNoActivePrivateSession,
+  waitForMemberPrivatePanelSessionMatchesActiveApi,
+} from "./helpers/private-room-flow";
 import { ensureStreamerLive } from "./helpers/studio";
 
 const STREAMER_EMAIL = "eda@test.com";
@@ -57,6 +62,7 @@ test("private room ready state syncs in realtime", async ({ browser, request }, 
     );
 
     await memberPage.goto(`/rooms/${roomId}`);
+    await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
     await memberPage.getByTestId("private-room-request-button").click();
     await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
 
@@ -66,6 +72,7 @@ test("private room ready state syncs in realtime", async ({ browser, request }, 
 
     await expect(memberPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
     await expect(streamerPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
+    await waitForMemberPrivatePanelSessionMatchesActiveApi(request, memberPage, 30_000);
     sessionStarted = true;
 
     await expect(memberPage.getByTestId("private-session-local-ready")).toBeVisible({ timeout: 30_000 });
@@ -92,7 +99,7 @@ test("private room ready state syncs in realtime", async ({ browser, request }, 
         await stopButton.click().catch(() => {});
       }
     }
-    await normalizeTestFixtures(request).catch(() => {});
+    await cleanupPrivateRoomFlow({ request, streamerPage, memberPage });
     await memberContext.close().catch(() => {});
     await streamerContext.close().catch(() => {});
   }

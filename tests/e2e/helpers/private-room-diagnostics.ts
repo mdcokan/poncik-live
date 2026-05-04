@@ -40,6 +40,8 @@ export type PrivateRoomDiagnosticsOpts = {
   streamerPage: Page;
   request: APIRequestContext;
   roomId?: string;
+  /** Last successful `/api/test/normalize-fixtures` JSON snapshot (test-only). */
+  normalizeSnapshot?: unknown;
 };
 
 /**
@@ -50,6 +52,9 @@ export async function attachPrivateRoomDiagnostics(testInfo: TestInfo, opts: Pri
 
   lines.push(`memberUrl=${opts.memberPage.isClosed() ? "<closed>" : opts.memberPage.url()}`);
   lines.push(`studioUrl=${opts.streamerPage.isClosed() ? "<closed>" : opts.streamerPage.url()}`);
+  if (opts.normalizeSnapshot !== undefined) {
+    lines.push(`normalizeSnapshot=${snippet(JSON.stringify(opts.normalizeSnapshot), 4000)}`);
+  }
 
   for (const label of ["member", "studio"] as const) {
     const page = label === "member" ? opts.memberPage : opts.streamerPage;

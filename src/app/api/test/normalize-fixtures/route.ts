@@ -178,6 +178,7 @@ export async function POST(request: Request) {
       throw new Error(`admin_close_live_room failed during fixture normalize: ${closeLiveError.message}`);
     }
 
+    let pendingRequestsCancelled = 0;
     const { data: pendingPrivateRows, error: pendingPrivateError } = await adminClient
       .from("private_room_requests")
       .select("id")
@@ -200,35 +201,68 @@ export async function POST(request: Request) {
         }
         throw new Error(`Failed to cancel fixture private room request: ${cancelError.message}`);
       }
+      pendingRequestsCancelled += 1;
     }
 
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const fixtureMaintenanceClient = serviceRoleKey
+      ? createClient(supabaseUrl, serviceRoleKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        })
+      : null;
+
+    /** Only Eda (streamer) + Veli (viewer) pairs — avoids touching unrelated active sessions. */
     const { data: activePrivateSessions, error: activePrivateSessionsError } = await adminClient
       .from("private_room_sessions")
       .select("id")
       .eq("status", "active")
-      .or(`viewer_id.eq.${fixtureUsers[VIEWER_EMAIL].id},streamer_id.eq.${fixtureUsers[STREAMER_EMAIL].id}`);
+      .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id)
+      .eq("viewer_id", fixtureUsers[VIEWER_EMAIL].id);
     if (activePrivateSessionsError) {
       throw new Error(`Failed to list active private sessions: ${activePrivateSessionsError.message}`);
     }
+
+    let activeSessionsClosed = 0;
     for (const sessionRow of activePrivateSessions ?? []) {
       const { error: endSessionError } = await adminClient.rpc("end_private_room_session", {
         p_session_id: sessionRow.id,
         p_end_reason: "fixture_normalize",
       });
-      if (endSessionError) {
-        const msg = endSessionError.message ?? "";
-        if (msg.includes("SESSION_NOT_FOUND") || msg.includes("SESSION_NOT_ACTIVE")) {
-          continue;
+      if (!endSessionError) {
+        activeSessionsClosed += 1;
+        continue;
+      }
+      const msg = endSessionError.message ?? "";
+      if (msg.includes("SESSION_NOT_FOUND") || msg.includes("SESSION_NOT_ACTIVE")) {
+        continue;
+      }
+      if (fixtureMaintenanceClient) {
+        const endedAt = new Date().toISOString();
+        const { data: forcedRows, error: forceEndError } = await fixtureMaintenanceClient
+          .from("private_room_sessions")
+          .update({
+            status: "ended",
+            ended_at: endedAt,
+            updated_at: endedAt,
+          })
+          .eq("id", sessionRow.id)
+          .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id)
+          .eq("viewer_id", fixtureUsers[VIEWER_EMAIL].id)
+          .eq("status", "active")
+          .select("id");
+        if (forceEndError) {
+          throw new Error(`end_private_room_session failed and service-role force-end failed: ${endSessionError.message} / ${forceEndError.message}`);
         }
-        throw new Error(`Failed to end active private session: ${endSessionError.message}`);
+        if (forcedRows && forcedRows.length > 0) {
+          activeSessionsClosed += 1;
+        }
+      } else {
+        throw new Error(`Failed to end active private session (no SUPABASE_SERVICE_ROLE_KEY for fallback): ${endSessionError.message}`);
       }
     }
 
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (serviceRoleKey) {
-      const fixtureMaintenanceClient = createClient(supabaseUrl, serviceRoleKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+    let presenceRowsDeleted = 0;
+    if (fixtureMaintenanceClient) {
       const { error: cleanupWithdrawalError } = await fixtureMaintenanceClient
         .from("streamer_withdrawal_requests")
         .delete()
@@ -236,6 +270,17 @@ export async function POST(request: Request) {
       if (cleanupWithdrawalError) {
         throw new Error(`Failed to clean fixture streamer withdrawals: ${cleanupWithdrawalError.message}`);
       }
+
+      const fixtureUserIds = [fixtureUsers[STREAMER_EMAIL].id, fixtureUsers[VIEWER_EMAIL].id];
+      const { data: deletedPresence, error: presenceDeleteError } = await fixtureMaintenanceClient
+        .from("room_presence")
+        .delete()
+        .in("user_id", fixtureUserIds)
+        .select("room_id");
+      if (presenceDeleteError) {
+        throw new Error(`Failed to delete fixture room_presence rows: ${presenceDeleteError.message}`);
+      }
+      presenceRowsDeleted = deletedPresence?.length ?? 0;
     } else {
       const { data: pendingWithdrawalRows, error: pendingWithdrawalListError } = await adminClient
         .from("streamer_withdrawal_requests")
@@ -282,16 +327,41 @@ export async function POST(request: Request) {
       .eq("id", fixtureUsers[STREAMER_EMAIL].id)
       .maybeSingle<{ role: string | null; is_banned: boolean | null; display_name: string | null }>();
 
+    const { data: veliProfileSnapshot } = await adminClient
+      .from("profiles")
+      .select("role, is_banned, display_name")
+      .eq("id", fixtureUsers[VIEWER_EMAIL].id)
+      .maybeSingle<{ role: string | null; is_banned: boolean | null; display_name: string | null }>();
+
+    const { data: walletAfter } = await adminClient
+      .from("wallets")
+      .select("balance")
+      .eq("user_id", fixtureUsers[VIEWER_EMAIL].id)
+      .maybeSingle();
+    const veliWalletBalance = typeof walletAfter?.balance === "number" ? walletAfter.balance : null;
+
     return json({
       ok: true,
       snapshot: {
         eda: {
-          email: STREAMER_EMAIL,
+          id: fixtureUsers[STREAMER_EMAIL].id,
           role: edaProfileSnapshot?.role ?? null,
           is_banned: edaProfileSnapshot?.is_banned ?? null,
           display_name: edaProfileSnapshot?.display_name ?? null,
         },
-        liveRoomsClosedForEda,
+        veli: {
+          id: fixtureUsers[VIEWER_EMAIL].id,
+          role: veliProfileSnapshot?.role ?? null,
+          is_banned: veliProfileSnapshot?.is_banned ?? null,
+          display_name: veliProfileSnapshot?.display_name ?? null,
+          walletBalance: veliWalletBalance,
+        },
+        privateRoomCleanup: {
+          activeSessionsClosed,
+          pendingRequestsCancelled,
+          presenceRowsDeleted,
+          liveRoomsClosedForEda,
+        },
       },
     });
   } catch (error) {
