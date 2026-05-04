@@ -25,6 +25,7 @@ const menuItems = [
   { label: "Ban / Engel Yonetimi", href: "/admin/moderation" },
   { label: "Duyurular", href: "/admin/announcements" },
   { label: "Yayin Kurallari", href: "/admin/rules" },
+  { label: "Sistem Sağlığı", href: "/admin/system-health" },
   { label: "Sistem Ayarlari", href: "/admin/settings" },
 ];
 
