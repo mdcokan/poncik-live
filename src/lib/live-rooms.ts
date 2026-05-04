@@ -7,6 +7,7 @@ type RoomRow = {
   owner_id: string;
   updated_at: string | null;
   created_at: string | null;
+  live_started_at?: string | null;
 };
 
 type ProfileRow = {
@@ -22,6 +23,7 @@ export type LiveRoom = {
   ownerId: string;
   updatedAt: string | null;
   createdAt: string | null;
+  liveStartedAt: string | null;
   streamerName: string;
   streamerRole: string | null;
 };
@@ -38,6 +40,7 @@ export type PublicRoomState = {
   ownerId: string;
   streamerName: string;
   isLive: boolean;
+  liveStartedAt: string | null;
 };
 
 function getSupabaseClient() {
@@ -73,7 +76,7 @@ export async function fetchLiveRooms(limit = 24): Promise<LiveRoomsResult> {
 
     const { data: roomsData, error: roomsError } = await supabase
       .from("rooms")
-      .select("id, title, status, owner_id, updated_at, created_at")
+      .select("id, title, status, owner_id, updated_at, created_at, live_started_at")
       .eq("status", "live")
       .order("updated_at", { ascending: false })
       .limit(safeLimit);
@@ -107,6 +110,7 @@ export async function fetchLiveRooms(limit = 24): Promise<LiveRoomsResult> {
         ownerId: room.owner_id,
         updatedAt: room.updated_at,
         createdAt: room.created_at,
+        liveStartedAt: room.live_started_at ?? null,
         streamerName: resolveStreamerName(room, profile),
         streamerRole: profile?.role ?? null,
       };
@@ -129,9 +133,15 @@ export async function fetchPublicRoomState(roomId: string): Promise<PublicRoomSt
   const supabase = getSupabaseClient();
   const { data: roomData, error: roomError } = await supabase
     .from("rooms")
-    .select("id, title, status, owner_id")
+    .select("id, title, status, owner_id, live_started_at")
     .eq("id", roomId)
-    .maybeSingle();
+    .maybeSingle<{
+      id: string;
+      title: string | null;
+      status: string;
+      owner_id: string;
+      live_started_at: string | null;
+    }>();
 
   if (roomError || !roomData) {
     return null;
@@ -150,6 +160,7 @@ export async function fetchPublicRoomState(roomId: string): Promise<PublicRoomSt
     ownerId: roomData.owner_id,
     streamerName: resolveStreamerName(roomData, ownerProfileData ?? undefined),
     isLive: roomData.status === "live",
+    liveStartedAt: roomData.live_started_at ?? null,
   };
 }
 

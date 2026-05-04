@@ -20,6 +20,7 @@ export type RoomStatePayload = {
   ownerId: string;
   streamerName: string;
   isLive: boolean;
+  liveStartedAt?: string | null;
 };
 
 /** Fixture streamer Eda — tolerant of ASCII "Yayinci" vs "Yayıncı" title/display variants. */

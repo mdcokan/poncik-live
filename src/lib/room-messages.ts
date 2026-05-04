@@ -53,10 +53,27 @@ function mapRoomMessage(row: RoomMessageRow, senderNameById: Map<string, string>
   };
 }
 
+/** When set, only messages from this broadcast (created_at >= liveStartedAt) are shown in live UIs. */
+export function isRoomMessageAtOrAfterLiveStart(
+  createdAt: string,
+  liveStartedAt: string | null | undefined,
+): boolean {
+  if (liveStartedAt == null || liveStartedAt === "") {
+    return true;
+  }
+  const messageTime = new Date(createdAt).getTime();
+  const startTime = new Date(liveStartedAt).getTime();
+  if (!Number.isFinite(messageTime) || !Number.isFinite(startTime)) {
+    return true;
+  }
+  return messageTime >= startTime;
+}
+
 export async function fetchRoomMessages(
   roomId: string,
   limit = 50,
   supabaseClient?: SupabaseClient,
+  liveStartedAt?: string | null,
 ): Promise<RoomMessage[]> {
   try {
     if (!roomId) {
@@ -65,10 +82,14 @@ export async function fetchRoomMessages(
 
     const safeLimit = Math.min(Math.max(limit, 1), 50);
     const supabase = supabaseClient ?? getSupabaseClient();
-    const { data: messageRows, error: messagesError } = await supabase
+    let query = supabase
       .from("room_messages")
       .select("id, room_id, sender_id, body, created_at")
-      .eq("room_id", roomId)
+      .eq("room_id", roomId);
+    if (liveStartedAt) {
+      query = query.gte("created_at", liveStartedAt);
+    }
+    const { data: messageRows, error: messagesError } = await query
       .order("created_at", { ascending: false })
       .limit(safeLimit);
 
