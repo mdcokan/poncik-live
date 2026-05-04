@@ -16,6 +16,9 @@ import {
   getSupabaseBrowserClient,
 } from "@/lib/supabase-browser";
 import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
+import PrivateSessionEndedSummary, {
+  type PrivateSessionCloseSummary,
+} from "@/components/private-room/PrivateSessionEndedSummary";
 import { DirectMessagesPanel } from "@/components/dm/DirectMessagesPanel";
 import { usePrivateRoomSignaling } from "@/hooks/use-private-room-signaling";
 
@@ -208,6 +211,7 @@ export default function StudioPage() {
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
   const [privateSessionResult, setPrivateSessionResult] = useState<string | null>(null);
+  const [privateSessionCloseSummary, setPrivateSessionCloseSummary] = useState<PrivateSessionCloseSummary | null>(null);
   const [privateSessionError, setPrivateSessionError] = useState<string | null>(null);
   const [presenceErrorMessage, setPresenceErrorMessage] = useState<string | null>(null);
   const [moderationBusyUserId, setModerationBusyUserId] = useState<string | null>(null);
@@ -1075,6 +1079,7 @@ export default function StudioPage() {
       });
       setActivePrivateSession((previous) => {
         if (previous?.sessionId && !resolvedSession?.sessionId) {
+          setPrivateSessionCloseSummary(null);
           setPrivateSessionResult((message) => {
             if (!message || message === "Session başladı") {
               return "Özel oda kapatıldı.";
@@ -1140,6 +1145,7 @@ export default function StudioPage() {
     }
     setIsPrivateSessionStarting(true);
     setPrivateSessionResult(null);
+    setPrivateSessionCloseSummary(null);
     setPrivateSessionError(null);
     try {
       const supabase = getSupabase();
@@ -1174,6 +1180,7 @@ export default function StudioPage() {
           viewerName: viewerFallback,
         }),
       );
+      setPrivateSessionCloseSummary(null);
       setPrivateSessionResult("Session başladı");
     } catch {
       setPrivateRequestsFeedback("Özel oda başlatılamadı.");
@@ -1188,6 +1195,7 @@ export default function StudioPage() {
     }
     setIsPrivateSessionEnding(true);
     setPrivateSessionResult(null);
+    setPrivateSessionCloseSummary(null);
     setPrivateSessionError(null);
     try {
       const supabase = getSupabase();
@@ -1217,6 +1225,7 @@ export default function StudioPage() {
         payload.session?.chargedMinutes ??
         (typeof payload.session?.durationSeconds === "number" ? Math.max(1, Math.ceil(payload.session.durationSeconds / 60)) : 0);
       const earnedMinutes = payload.session?.streamerEarnedMinutes ?? fallbackMinutes;
+      setPrivateSessionCloseSummary({ earnedMinutes });
       setPrivateSessionResult(`Özel oda kapatıldı. Yayıncı kazancı: ${earnedMinutes} dk`);
       setActivePrivateSession(null);
     } catch {
@@ -1805,9 +1814,11 @@ export default function StudioPage() {
                   />
                 ) : null}
                 {!activePrivateSession && privateSessionResult ? (
-                  <p className="mb-3 text-xs font-semibold text-violet-700" data-testid="private-session-result">
-                    {privateSessionResult}
-                  </p>
+                  <PrivateSessionEndedSummary
+                    role="streamer"
+                    resultText={privateSessionResult}
+                    summary={privateSessionCloseSummary}
+                  />
                 ) : null}
                 {!activePrivateSession && privateSessionError ? (
                   <p className="mb-3 text-xs font-semibold text-rose-700" data-testid="private-session-error">

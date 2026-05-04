@@ -55,6 +55,12 @@ export default function PrivateRoomMediaPrep({
     onStreamChange?.(stream ?? null);
   }, [stream, onStreamChange]);
 
+  const safeErrorMessage = errorMessage ?? "";
+  const showPermissionHint =
+    safeErrorMessage.length > 0 &&
+    (permissionState === "denied" ||
+      (permissionState === "error" && safeErrorMessage.includes("bulunamadı")));
+
   return (
     <section className="rounded-2xl border border-violet-200 bg-white p-4 shadow-sm" data-testid="private-media-prep">
       <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-500">{roleLabel}</p>
@@ -137,6 +143,16 @@ export default function PrivateRoomMediaPrep({
         </label>
       </div>
 
+      {showPermissionHint ? (
+        <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-media-permission-hint">
+          {safeErrorMessage}
+        </p>
+      ) : errorMessage ? (
+        <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-media-error">
+          {safeErrorMessage}
+        </p>
+      ) : null}
+
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
@@ -147,7 +163,11 @@ export default function PrivateRoomMediaPrep({
           disabled={isRequesting}
           className="rounded-lg bg-violet-500 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-300"
         >
-          {isRequesting ? "İzin İsteniyor..." : "Kamera/Mikrofon İzni Ver"}
+          {isRequesting
+            ? "İzin İsteniyor..."
+            : permissionState === "denied" || permissionState === "error"
+              ? "Yeniden Dene"
+              : "Kamera/Mikrofon İzni Ver"}
         </button>
         <button
           type="button"
@@ -184,11 +204,6 @@ export default function PrivateRoomMediaPrep({
       ) : null}
       {permissionState !== "granted" && isReady ? (
         <p className="mt-2 text-xs text-amber-700">Medya izni olmadan da hazırlık durumuna geçtiniz (simülasyon).</p>
-      ) : null}
-      {errorMessage ? (
-        <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-media-error">
-          {errorMessage}
-        </p>
       ) : null}
 
       <div className="mt-2">

@@ -107,6 +107,65 @@ function mapWebRtcConnectionLabel(state: string) {
   }
 }
 
+type SessionStepVisual = "pending" | "current" | "complete";
+
+function getWebRtcStartButtonLabel(connectionState: string) {
+  switch (connectionState) {
+    case "failed":
+    case "disconnected":
+      return "Yeniden Dene";
+    case "creating":
+    case "connecting":
+      return "Bağlanıyor...";
+    case "connected":
+      return "Bağlandı";
+    case "idle":
+    case "closed":
+    default:
+      return "Bağlantıyı Başlat";
+  }
+}
+
+function getPrivateSessionGuidance(args: {
+  role: "viewer" | "streamer";
+  localUserReady: boolean;
+  remoteUserReady: boolean;
+  connectionState: string;
+}) {
+  const { role, localUserReady, remoteUserReady, connectionState } = args;
+  const cs = connectionState;
+
+  if (!localUserReady) {
+    return "Kamera/mikrofonunu kontrol edip Hazırım butonuna bas.";
+  }
+  if (!remoteUserReady) {
+    return role === "viewer" ? "Yayıncının hazır olmasını bekliyorsun." : "Üyenin hazır olmasını bekliyorsun.";
+  }
+  if (cs === "connected") {
+    return "Görüşme aktif.";
+  }
+  if (role === "viewer") {
+    if (cs === "idle" || cs === "closed") {
+      return "Görüntülü bağlantıyı başlatmak için yayıncıyı bekliyorsun.";
+    }
+    return "Bağlantı kuruluyor veya kesildi; yayıncı tarafında yeniden deneme gerekebilir.";
+  }
+  if (cs === "idle" || cs === "closed" || cs === "failed" || cs === "disconnected") {
+    return "Bağlantıyı Başlat ile görüntülü görüşmeyi başlat.";
+  }
+  return "Bağlantı kuruluyor...";
+}
+
+function stepChipClass(visual: SessionStepVisual) {
+  if (visual === "complete") {
+    return "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200";
+  }
+  if (visual === "current") {
+    return "bg-violet-100 text-violet-900 ring-2 ring-violet-400";
+  }
+  return "bg-zinc-100 text-zinc-500";
+}
+
 function PlaceholderCard({ title, name }: { title: string; name: string }) {
   return (
     <article className="rounded-2xl border border-violet-200 bg-white p-4 shadow-sm">
@@ -176,6 +235,8 @@ export default function PrivateRoomSessionPanel({
     estimatedRemainingMinutes <= lowBalanceThresholdMinutes;
   const remoteReady = currentUserRole === "viewer" ? streamerReady : viewerReady;
   const bothReady = viewerReady && streamerReady;
+  const localUserReady = currentUserRole === "viewer" ? viewerReady : streamerReady;
+  const remoteUserReady = currentUserRole === "viewer" ? streamerReady : viewerReady;
   const webRtcHookEnabled = Boolean(enableWebRtc && bothReady && onSendSignal && currentUserId);
 
   const handleLocalStreamChange = useCallback((stream: MediaStream | null) => {
@@ -199,6 +260,42 @@ export default function PrivateRoomSessionPanel({
     () => getRemoteWebRtcStatusLabel(Boolean(webrtc.remoteStream)),
     [webrtc.remoteStream],
   );
+
+  const sessionStepVisuals = useMemo(() => {
+    const mediaDone = Boolean(localMediaStream) || localReady;
+    const connected = webrtc.connectionState === "connected";
+    const prepVisual: SessionStepVisual = "complete";
+    const mediaVisual: SessionStepVisual = mediaDone ? "complete" : "current";
+    const connectionVisual: SessionStepVisual = connected
+      ? "complete"
+      : bothReady
+        ? "current"
+        : "pending";
+    const callVisual: SessionStepVisual = connected
+      ? "complete"
+      : bothReady && (webrtc.connectionState === "creating" || webrtc.connectionState === "connecting")
+        ? "current"
+        : "pending";
+    return { prepVisual, mediaVisual, connectionVisual, callVisual };
+  }, [bothReady, localMediaStream, localReady, webrtc.connectionState]);
+
+  const sessionGuidanceText = useMemo(
+    () =>
+      getPrivateSessionGuidance({
+        role: currentUserRole,
+        localUserReady,
+        remoteUserReady,
+        connectionState: webrtc.connectionState,
+      }),
+    [currentUserRole, localUserReady, remoteUserReady, webrtc.connectionState],
+  );
+
+  const webRtcStartLabel = useMemo(() => getWebRtcStartButtonLabel(webrtc.connectionState), [webrtc.connectionState]);
+
+  const showWebRtcConnectionFailureHint =
+    Boolean(webrtc.errorMessage) ||
+    webrtc.connectionState === "failed" ||
+    webrtc.connectionState === "disconnected";
 
   useEffect(() => {
     const el = remoteVideoRef.current;
@@ -273,6 +370,44 @@ export default function PrivateRoomSessionPanel({
     >
       <h2 className="text-lg font-black text-violet-900">Özel Oda Aktif</h2>
       <p className="mt-1 text-sm text-violet-800">Kamera hazırlığı ve görüntülü bağlantı (WebRTC) bu panelden yönetilir.</p>
+
+      <div className="mt-3 rounded-xl border border-violet-100 bg-white/70 p-3" data-testid="private-session-steps">
+        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-600">Özel oda adımları</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <span
+            data-testid="private-session-step-prep"
+            data-step-visual={sessionStepVisuals.prepVisual}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${stepChipClass(sessionStepVisuals.prepVisual)}`}
+          >
+            1. Hazırlık
+          </span>
+          <span
+            data-testid="private-session-step-media"
+            data-step-visual={sessionStepVisuals.mediaVisual}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${stepChipClass(sessionStepVisuals.mediaVisual)}`}
+          >
+            2. Kamera/Mikrofon
+          </span>
+          <span
+            data-testid="private-session-step-connection"
+            data-step-visual={sessionStepVisuals.connectionVisual}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${stepChipClass(sessionStepVisuals.connectionVisual)}`}
+          >
+            3. Bağlantı
+          </span>
+          <span
+            data-testid="private-session-step-call"
+            data-step-visual={sessionStepVisuals.callVisual}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${stepChipClass(sessionStepVisuals.callVisual)}`}
+          >
+            4. Görüşme
+          </span>
+        </div>
+      </div>
+
+      <p className="mt-2 text-sm font-semibold text-violet-950" data-testid="private-session-guidance">
+        {sessionGuidanceText}
+      </p>
 
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {currentUserRole === "streamer" ? (
@@ -408,7 +543,7 @@ export default function PrivateRoomSessionPanel({
                 void webrtc.startConnection();
               }}
             >
-              Bağlantıyı Başlat
+              {webRtcStartLabel}
             </button>
             <button
               type="button"
@@ -451,6 +586,9 @@ export default function PrivateRoomSessionPanel({
               </div>
             )}
           </div>
+          {showWebRtcConnectionFailureHint ? (
+            <p className="mt-2 text-xs font-semibold text-rose-800">Bağlantı kurulamadı. Yeniden deneyebilirsin.</p>
+          ) : null}
           {webrtc.errorMessage ? (
             <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-webrtc-error">
               {webrtc.errorMessage}

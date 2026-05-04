@@ -14,7 +14,11 @@ function getUnsupportedMessage() {
 }
 
 function getDeniedMessage() {
-  return "Kamera veya mikrofon izni alınamadı.";
+  return "Kamera veya mikrofon izni alınamadı. Tarayıcı izinlerini kontrol edip tekrar deneyebilirsin.";
+}
+
+function getDeviceNotFoundMessage() {
+  return "Kamera/mikrofon cihazı bulunamadı.";
 }
 
 function getDeviceLists(devices: MediaDeviceInfo[]): MediaDeviceInfoList {
@@ -120,8 +124,21 @@ export function useLocalMediaPreview() {
       const denied =
         error instanceof DOMException &&
         (error.name === "NotAllowedError" || error.name === "PermissionDeniedError" || error.name === "SecurityError");
-      setPermissionState(denied ? "denied" : "error");
-      setErrorMessage(getDeniedMessage());
+      const deviceMissing =
+        error instanceof DOMException &&
+        (error.name === "NotFoundError" ||
+          error.name === "DevicesNotFoundError" ||
+          error.name === "OverconstrainedError");
+      if (deviceMissing) {
+        setPermissionState("error");
+        setErrorMessage(getDeviceNotFoundMessage());
+      } else if (denied) {
+        setPermissionState("denied");
+        setErrorMessage(getDeniedMessage());
+      } else {
+        setPermissionState("error");
+        setErrorMessage(getDeniedMessage());
+      }
       stopMedia();
     } finally {
       setIsRequesting(false);

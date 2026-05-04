@@ -17,6 +17,9 @@ import {
   LIVE_ROOMS_CHANGED_EVENT,
 } from "@/lib/supabase-browser";
 import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
+import PrivateSessionEndedSummary, {
+  type PrivateSessionCloseSummary,
+} from "@/components/private-room/PrivateSessionEndedSummary";
 import { DirectMessagesPanel } from "@/components/dm/DirectMessagesPanel";
 import { usePrivateRoomSignaling } from "@/hooks/use-private-room-signaling";
 
@@ -284,6 +287,7 @@ export default function ViewerRoomClientPage() {
   const [showDmOverlay, setShowDmOverlay] = useState(false);
   const [activePrivateSession, setActivePrivateSession] = useState<PrivateSessionSummary | null>(null);
   const [privateSessionResult, setPrivateSessionResult] = useState<string | null>(null);
+  const [privateSessionCloseSummary, setPrivateSessionCloseSummary] = useState<PrivateSessionCloseSummary | null>(null);
   const [privateSessionError, setPrivateSessionError] = useState<string | null>(null);
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
@@ -1200,6 +1204,7 @@ export default function ViewerRoomClientPage() {
     }
     setIsPrivateSessionStarting(true);
     setPrivateSessionResult(null);
+    setPrivateSessionCloseSummary(null);
     setPrivateSessionError(null);
     try {
       const supabase = getSupabaseBrowserClient();
@@ -1252,6 +1257,7 @@ export default function ViewerRoomClientPage() {
     }
     setIsPrivateSessionEnding(true);
     setPrivateSessionResult(null);
+    setPrivateSessionCloseSummary(null);
     setPrivateSessionError(null);
     try {
       const supabase = getSupabaseBrowserClient();
@@ -1280,6 +1286,13 @@ export default function ViewerRoomClientPage() {
         payload.session?.chargedMinutes ??
         (typeof payload.session?.durationSeconds === "number" ? Math.max(1, Math.ceil(payload.session.durationSeconds / 60)) : 0);
       const isBalanceDepleted = reason === "balance_depleted";
+      const balanceBefore = activePrivateSession.viewerBalanceMinutes;
+      const remainingMinutes =
+        typeof balanceBefore === "number" ? Math.max(0, Math.floor(balanceBefore) - spent) : null;
+      setPrivateSessionCloseSummary({
+        spentMinutes: spent,
+        remainingMinutes,
+      });
       setPrivateSessionResult(
         isBalanceDepleted
           ? `Süre bittiği için özel oda kapatıldı. Harcanan süre: ${spent} dk`
@@ -1572,9 +1585,7 @@ export default function ViewerRoomClientPage() {
             />
           ) : null}
           {!activePrivateSession && privateSessionResult ? (
-            <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-session-result">
-              {privateSessionResult}
-            </p>
+            <PrivateSessionEndedSummary role="viewer" resultText={privateSessionResult} summary={privateSessionCloseSummary} />
           ) : null}
           {!activePrivateSession && privateSessionError ? (
             <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-session-error">
