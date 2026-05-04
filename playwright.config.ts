@@ -1,5 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
+/**
+ * Live room, private session, and signaling specs assume exclusive fixture state.
+ * Run them with `--workers=1` (see docs/production-checklist.md). Default workers>1 is fine for isolated tests.
+ */
 export default defineConfig({
   testDir: "./tests/e2e",
   outputDir: "test-results",

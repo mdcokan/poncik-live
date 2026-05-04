@@ -83,20 +83,18 @@ export async function POST(request: Request) {
       return json({ ok: false, message: "Active private session bulunamadı." }, { status: 404 });
     }
 
-    if (!serviceRoleKey) {
-      const { data: profiles, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, display_name")
-        .in("id", [targetSession.viewer_id, targetSession.streamer_id]);
-      if (profileError) {
-        throw new Error(`Failed to validate fixture users: ${profileError.message}`);
-      }
-      const profileMap = new Map((profiles ?? []).map((item) => [item.id, item.display_name?.trim() ?? ""]));
-      const viewerName = profileMap.get(targetSession.viewer_id);
-      const streamerName = profileMap.get(targetSession.streamer_id);
-      if (viewerName !== "Üye Veli" || streamerName !== "Yayıncı Eda") {
-        return json({ ok: false, message: "Fixture private session doğrulanamadı." }, { status: 403 });
-      }
+    const { data: profiles, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, display_name")
+      .in("id", [targetSession.viewer_id, targetSession.streamer_id]);
+    if (profileError) {
+      throw new Error(`Failed to validate fixture users: ${profileError.message}`);
+    }
+    const profileMap = new Map((profiles ?? []).map((item) => [item.id, item.display_name?.trim() ?? ""]));
+    const viewerName = profileMap.get(targetSession.viewer_id);
+    const streamerName = profileMap.get(targetSession.streamer_id);
+    if (viewerName !== "Üye Veli" || streamerName !== "Yayıncı Eda") {
+      return json({ ok: false, message: "Fixture private session doğrulanamadı." }, { status: 403 });
     }
 
     const startedAtIso = new Date(Date.now() - secondsAgo * 1000).toISOString();
