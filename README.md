@@ -1,5 +1,10 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Operations
+
+- [Production checklist](docs/production-checklist.md) — env, security-sensitive routes, Supabase realtime/RPC, WebRTC.
+- [Deployment smoke plan](docs/deployment-smoke-plan.md) — pre-deploy checks, Supabase steps, build, E2E smoke commands, manual checklist, rollback notes.
+
 ## Getting Started
 
 First, run the development server:
