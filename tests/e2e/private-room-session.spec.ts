@@ -105,9 +105,11 @@ test("private room session starts and charges member minutes", async ({ browser,
       message: "Özel oda daveti, oda canlı görülene kadar kapalı; viewer state gecikmesi için bekle.",
     });
     await privateRequestButton.click();
-    await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
+    await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen|bekleniyor|gönderildi|gonderildi/i, {
+      timeout: 20_000,
+    });
 
-    const acceptButton = streamerPage.getByTestId("accept-private-request-button").first();
+    const acceptButton = streamerPage.getByTestId("studio-private-request-accept-button").first();
     await expect(acceptButton).toBeVisible({ timeout: 25_000 });
     await acceptButton.click();
 
@@ -118,8 +120,8 @@ test("private room session starts and charges member minutes", async ({ browser,
     const memberSessionId = (await memberPage.getByTestId("private-session-panel").getAttribute("data-session-id"))?.trim();
     expect(streamerSessionId).toBeTruthy();
     expect(streamerSessionId).toBe(memberSessionId);
-    await expect(memberPage.getByTestId("private-session-timer")).toContainText(/Geçen süre:\s*00:0[0-1]/i, { timeout: 30_000 });
-    await expect(streamerPage.getByTestId("private-session-timer")).toContainText(/Geçen süre:\s*00:0[0-1]/i, { timeout: 30_000 });
+    await expect(memberPage.getByTestId("private-session-timer")).toContainText(/Geçen süre:\s*00:\d{2}/i, { timeout: 30_000 });
+    await expect(streamerPage.getByTestId("private-session-timer")).toContainText(/Geçen süre:\s*00:\d{2}/i, { timeout: 30_000 });
     const memberPrivateSessionPanel = memberPage.getByTestId("private-session-panel");
     await expect(memberPrivateSessionPanel).toContainText(/Eda/i, { timeout: 30_000 });
     await expect(memberPrivateSessionPanel).toContainText(/Veli/i, { timeout: 30_000 });

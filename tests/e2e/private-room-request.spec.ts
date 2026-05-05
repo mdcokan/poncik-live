@@ -211,7 +211,7 @@ test("private room request flow handles minute checks and acceptance", async ({ 
     await inviteButton.click();
 
     try {
-      await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, {
+      await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen|bekleniyor|gönderildi|gonderildi/i, {
         timeout: 25_000,
       });
     } catch (err) {
@@ -249,14 +249,13 @@ test("private room request flow handles minute checks and acceptance", async ({ 
       )
       .toBe("ok");
 
-    const requestsPanel = streamerPage.getByTestId("studio-private-requests-panel");
-    await expect(requestsPanel).toBeVisible({ timeout: 20_000 });
-    await expect(requestsPanel.getByText("Talepler yükleniyor", { exact: false })).toHaveCount(0, { timeout: 45_000 });
-    const acceptBtn = requestsPanel.getByTestId("accept-private-request-button").first();
+    const requestModal = streamerPage.getByTestId("studio-private-request-modal");
+    const acceptBtn = streamerPage.getByTestId("studio-private-request-accept-button").first();
     try {
+      await expect(requestModal).toBeVisible({ timeout: 25_000 });
       await expect(acceptBtn).toBeVisible({ timeout: 25_000 });
     } catch (err) {
-      await failWithDiagnostics(`Studio Kabul Et button not visible after API pending: ${err}`);
+      await failWithDiagnostics(`Studio private request modal/accept button not visible after API pending: ${err}`);
     }
 
     const acceptResponsePromise = streamerPage.waitForResponse(

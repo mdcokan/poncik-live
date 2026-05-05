@@ -145,6 +145,7 @@ test("room moderation smoke: mute unmute kick ban", async ({ browser, request },
     await memberPage.getByRole("button", { name: /Gonder/i }).first().click();
     await expect(memberPage.getByText(initialMessage).first()).toBeVisible({ timeout: 20_000 });
 
+    await streamerPage.getByTestId("studio-tab-participants").click();
     const presencePanel = streamerPage.getByTestId("room-presence-panel").first();
     const memberRow = presencePanel.getByTestId("room-presence-user").filter({ hasText: /Üye Veli|Uye Veli|Veli/i }).first();
     await expect(memberRow).toBeVisible({ timeout: 25_000 });

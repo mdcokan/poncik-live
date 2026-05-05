@@ -118,9 +118,11 @@ test("room presence appears and clears in realtime", async ({ browser, request }
     });
     await expect(memberPage.getByTestId("viewer-gift-panel")).toHaveCount(0);
 
+    await memberPage.getByTestId("room-tab-participants").click();
     const viewerPresenceSection = memberPage.getByTestId("room-presence-panel").first();
     await expect(viewerPresenceSection).toBeVisible({ timeout: 15_000 });
 
+    await streamerPage.getByTestId("studio-tab-participants").click();
     const studioPresenceSection = streamerPage.getByTestId("room-presence-panel").first();
     await expect(studioPresenceSection).toBeVisible({ timeout: 15_000 });
     const memberPresenceRow = studioPresenceSection.getByTestId("room-presence-user").filter({ hasText: /Üye Veli|Uye Veli|Veli/i }).first();

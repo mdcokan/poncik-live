@@ -84,6 +84,7 @@ type PrivateRoomRequestRealtimeRow = {
 type PrivateRoomSessionRealtimeRow = {
   id: string;
   room_id: string;
+  viewer_id?: string;
   status: string;
   viewer_ready: boolean;
   streamer_ready: boolean;
@@ -264,7 +265,7 @@ export default function ViewerRoomClientPage() {
     isLoading: true,
   });
   const [hasFetchError, setHasFetchError] = useState(false);
-  const [activeTab, setActiveTab] = useState<"chat" | "gift">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "participants" | "gift">("chat");
   const [messages, setMessages] = useState<RoomMessage[]>([]);
   const [chatBody, setChatBody] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -293,6 +294,7 @@ export default function ViewerRoomClientPage() {
   const [privateSessionError, setPrivateSessionError] = useState<string | null>(null);
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
+  const [roomActivePrivateViewerId, setRoomActivePrivateViewerId] = useState<string | null>(null);
   const privateRoomSignaling = usePrivateRoomSignaling({
     sessionId: activePrivateSession?.sessionId ?? "",
     enabled: Boolean(activePrivateSession?.sessionId),
@@ -307,9 +309,15 @@ export default function ViewerRoomClientPage() {
 
   const isLive = state.room?.status === "live";
   const viewerLiveStartedAt = state.room?.liveStartedAt ?? null;
-  const isChatInputDisabled = !state.isLoggedIn || !isLive || isSending || isRoomMuted || isRoomBanned || isRoomKicked;
-  const isGiftSendDisabled = !state.isLoggedIn || !isLive || isViewerBanned || isRoomBanned || isRoomKicked || Boolean(pendingGiftId);
-  const isPrivateRequestDisabled = !isLive || isViewerBanned || isRoomBanned || isRoomKicked || isPrivateRequestPending;
+  const isRoomPrivateBusy =
+    Boolean(roomActivePrivateViewerId) &&
+    roomActivePrivateViewerId !== state.userId &&
+    activePrivateSession?.viewerId !== state.userId;
+  const isChatInputDisabled =
+    !state.isLoggedIn || !isLive || isSending || isRoomMuted || isRoomBanned || isRoomKicked || isRoomPrivateBusy;
+  const isGiftSendDisabled =
+    !state.isLoggedIn || !isLive || isViewerBanned || isRoomBanned || isRoomKicked || Boolean(pendingGiftId) || isRoomPrivateBusy;
+  const isPrivateRequestDisabled = !isLive || isViewerBanned || isRoomBanned || isRoomKicked || isPrivateRequestPending || isRoomPrivateBusy;
   const hasActivePrivateSession = Boolean(activePrivateSession?.sessionId);
 
   function getGiftMinuteCost(gift: GiftCatalogItem) {
@@ -419,6 +427,27 @@ export default function ViewerRoomClientPage() {
     const supabase = getSupabaseBrowserClient();
     const nextEvents = await fetchRoomGiftEvents(roomId, 20, supabase);
     setGiftEvents(nextEvents);
+  }, [isLive, roomId]);
+
+  const refreshRoomPrivateSession = useCallback(async () => {
+    if (!roomId || !isLive) {
+      setRoomActivePrivateViewerId(null);
+      return;
+    }
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { data } = await supabase
+        .from("private_room_sessions")
+        .select("id, viewer_id, status")
+        .eq("room_id", roomId)
+        .eq("status", "active")
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ id: string; viewer_id: string | null; status: string }>();
+      setRoomActivePrivateViewerId(data?.viewer_id ?? null);
+    } catch {
+      setRoomActivePrivateViewerId(null);
+    }
   }, [isLive, roomId]);
 
   const fetchRoomStateFromApi = useCallback(
@@ -933,6 +962,10 @@ export default function ViewerRoomClientPage() {
   }, [state.isLoggedIn, state.userId]);
 
   useEffect(() => {
+    void refreshRoomPrivateSession();
+  }, [refreshRoomPrivateSession]);
+
+  useEffect(() => {
     if (!state.userId) {
       return;
     }
@@ -981,6 +1014,33 @@ export default function ViewerRoomClientPage() {
       void supabase.removeChannel(channel);
     };
   }, [activePrivateSession?.sessionId, state.userId]);
+
+  useEffect(() => {
+    if (!roomId || !isLive) {
+      setRoomActivePrivateViewerId(null);
+      return;
+    }
+    const supabase = getSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`public:private-room-sessions:room:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "private_room_sessions",
+          filter: `room_id=eq.${roomId}`,
+        },
+        () => {
+          void refreshRoomPrivateSession();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [isLive, refreshRoomPrivateSession, roomId]);
 
   useEffect(() => {
     if (!roomId || !isLive || !state.isLoggedIn || !state.userId || isRoomBanned || isRoomKicked) {
@@ -1138,7 +1198,7 @@ export default function ViewerRoomClientPage() {
         return;
       }
 
-      setPrivateRequestFeedback("Özel oda talebiniz yayıncıya iletildi.");
+      setPrivateRequestFeedback("Özel oda davetin gönderildi. Yayıncının onayı bekleniyor.");
     } catch {
       setPrivateRequestFeedback("Özel oda talebi gönderilemedi.");
     } finally {
@@ -1535,7 +1595,7 @@ export default function ViewerRoomClientPage() {
             </div>
           </div>
 
-          <div className="mt-3 grid h-14 shrink-0 gap-2 sm:grid-cols-4">
+          <div className="mt-3 grid shrink-0 gap-2 sm:grid-cols-4">
             <button className="rounded-2xl bg-yellow-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
               CANLI DESTEK
             </button>
@@ -1579,6 +1639,11 @@ export default function ViewerRoomClientPage() {
               </p>
             )
           ) : null}
+          {isRoomPrivateBusy ? (
+            <p className="mt-2 text-xs font-semibold text-amber-700" data-testid="room-private-busy-notice">
+              Yayıncı şu anda özel görüşmede.
+            </p>
+          ) : null}
           {activePrivateSession ? (
             <PrivateRoomSessionPanel
               sessionId={activePrivateSession.sessionId}
@@ -1619,11 +1684,12 @@ export default function ViewerRoomClientPage() {
         </div>
 
         <aside className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden">
-          <div className="flex shrink-0 border-b border-zinc-200">
+          <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200 px-2 py-1" data-testid="room-side-tabs">
             <button
               type="button"
+              data-testid="room-tab-chat"
               onClick={() => setActiveTab("chat")}
-              className={`relative flex-1 py-3.5 text-sm font-black transition ${
+              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
                 activeTab === "chat" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1632,8 +1698,21 @@ export default function ViewerRoomClientPage() {
             </button>
             <button
               type="button"
+              data-testid="room-tab-participants"
+              onClick={() => setActiveTab("participants")}
+              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
+                activeTab === "participants" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
+              }`}
+            >
+              Odadakiler
+              <span className="ml-1 rounded-full bg-pink-100 px-1.5 py-0.5 text-[10px] text-pink-700">{presenceUsers.length}</span>
+              {activeTab === "participants" ? <span className="absolute inset-x-0 bottom-0 h-0.5 bg-pink-500" /> : null}
+            </button>
+            <button
+              type="button"
+              data-testid="room-tab-gifts"
               onClick={() => setActiveTab("gift")}
-              className={`relative flex-1 py-3.5 text-sm font-black transition ${
+              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
                 activeTab === "gift" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1643,7 +1722,7 @@ export default function ViewerRoomClientPage() {
           </div>
 
           <div className="shrink-0 border-b border-zinc-200 px-6 py-3 text-center text-base font-black text-zinc-700">
-            {activeTab === "chat" ? "Sohbet" : "Hediye Katalogu"}
+            {activeTab === "chat" ? "Sohbet" : activeTab === "participants" ? "Odadakiler" : "Hediye Katalogu"}
           </div>
 
           <div ref={messagesContainerRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -1710,40 +1789,41 @@ export default function ViewerRoomClientPage() {
                   </section>
                 </div>
               )
+            ) : activeTab === "participants" ? (
+              <section className="rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
+                  <span className="rounded-full bg-pink-100 px-2.5 py-1 text-xs font-bold text-pink-700">{presenceUsers.length}</span>
+                </div>
+                {presenceUsers.length === 0 ? (
+                  <p className="mt-2 text-sm text-zinc-500">Aktif odadaki uye yok.</p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {presenceUsers.map((presenceUser) => (
+                      <article
+                        key={presenceUser.id}
+                        className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2"
+                        data-testid="room-presence-user"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="truncate text-sm font-semibold text-zinc-800">{presenceUser.displayName}</p>
+                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold text-zinc-700">
+                            {getPresenceRoleLabel(presenceUser.role)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-zinc-500">Son gorulme: {formatSeenText(presenceUser.lastSeenAt)}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+                {presenceErrorMessage ? (
+                  <p className="mt-2 text-xs text-rose-600" data-testid="room-presence-error">
+                    Odadakiler listesine katilim dogrulanamadi. ({presenceErrorMessage})
+                  </p>
+                ) : null}
+              </section>
             ) : (
               <div data-testid="room-chat-message-list">
-                <section className="mb-4 rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
-                    <span className="rounded-full bg-pink-100 px-2.5 py-1 text-xs font-bold text-pink-700">{presenceUsers.length}</span>
-                  </div>
-                  {presenceUsers.length === 0 ? (
-                    <p className="mt-2 text-sm text-zinc-500">Aktif odadaki uye yok.</p>
-                  ) : (
-                    <div className="mt-3 space-y-2">
-                      {presenceUsers.map((presenceUser) => (
-                        <article
-                          key={presenceUser.id}
-                          className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2"
-                          data-testid="room-presence-user"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="truncate text-sm font-semibold text-zinc-800">{presenceUser.displayName}</p>
-                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold text-zinc-700">
-                              {getPresenceRoleLabel(presenceUser.role)}
-                            </span>
-                          </div>
-                          <p className="mt-1 text-xs text-zinc-500">Son gorulme: {formatSeenText(presenceUser.lastSeenAt)}</p>
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                  {presenceErrorMessage ? (
-                    <p className="mt-2 text-xs text-rose-600" data-testid="room-presence-error">
-                      Odadakiler listesine katilim dogrulanamadi. ({presenceErrorMessage})
-                    </p>
-                  ) : null}
-                </section>
                 {messages.length === 0 ? (
                   <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
                     Henuz sohbet mesaji yok.
