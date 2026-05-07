@@ -169,6 +169,7 @@ type RoomModerationRow = {
 };
 
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
+const CHAT_AUTO_SCROLL_THRESHOLD_PX = 80;
 
 function getStreamerName(room: RoomRow | null, profile: ProfileRow | null) {
   const profileName = profile?.display_name?.trim();
@@ -301,11 +302,22 @@ export default function ViewerRoomClientPage() {
   });
   const messageIdsRef = useRef(new Set<string>());
   const viewerChatEpochRef = useRef<string>("");
-  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const giftsScrollRef = useRef<HTMLDivElement | null>(null);
+  const participantsScrollRef = useRef<HTMLDivElement | null>(null);
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const giftOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestGiftEventIdRef = useRef<string | null>(null);
+  const tabScrollPositionsRef = useRef<{ chat: number; gift: number; participants: number }>({
+    chat: 0,
+    gift: 0,
+    participants: 0,
+  });
+  const prevMessageCountRef = useRef(0);
+  const prevGiftEventCountRef = useRef(0);
+  const shouldAutoScrollChatRef = useRef(true);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   const isLive = state.room?.status === "live";
   const viewerLiveStartedAt = state.room?.liveStartedAt ?? null;
@@ -324,8 +336,13 @@ export default function ViewerRoomClientPage() {
     return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
   }
 
-  const scrollMessagesToBottom = useCallback(() => {
-    const element = messagesContainerRef.current;
+  const isNearBottom = useCallback((element: HTMLDivElement) => {
+    const distance = element.scrollHeight - (element.scrollTop + element.clientHeight);
+    return distance <= CHAT_AUTO_SCROLL_THRESHOLD_PX;
+  }, []);
+
+  const scrollChatToBottom = useCallback(() => {
+    const element = chatScrollRef.current;
     if (!element) {
       return;
     }
@@ -375,13 +392,14 @@ export default function ViewerRoomClientPage() {
     try {
       const supabase = getSupabaseBrowserClient();
       const fetchedMessages = await fetchRoomMessages(roomId, 50, supabase, viewerLiveStartedAt);
+      const chatElement = chatScrollRef.current;
+      shouldAutoScrollChatRef.current = !chatElement || isNearBottom(chatElement);
       setMessages(fetchedMessages);
       messageIdsRef.current = new Set(fetchedMessages.map((message) => message.id));
-      scrollMessagesToBottom();
     } finally {
       setIsRefreshingMessages(false);
     }
-  }, [isLive, isRefreshingMessages, roomId, scrollMessagesToBottom, viewerLiveStartedAt]);
+  }, [isLive, isRefreshingMessages, isNearBottom, roomId, viewerLiveStartedAt]);
 
   const scheduleRefreshMessages = useCallback(
     (delayMs = 150) => {
@@ -761,6 +779,8 @@ export default function ViewerRoomClientPage() {
       viewerChatEpochRef.current = "";
       setMessages([]);
       messageIdsRef.current = new Set();
+      prevMessageCountRef.current = 0;
+      setUnreadChatCount(0);
       return;
     }
     const epoch = `${roomId}:${viewerLiveStartedAt ?? ""}`;
@@ -768,9 +788,29 @@ export default function ViewerRoomClientPage() {
       viewerChatEpochRef.current = epoch;
       setMessages([]);
       messageIdsRef.current = new Set();
+      prevMessageCountRef.current = 0;
+      setUnreadChatCount(0);
     }
     void refreshMessages();
   }, [isLive, refreshMessages, roomId, viewerLiveStartedAt]);
+
+  useEffect(() => {
+    const chatElement = chatScrollRef.current;
+    if (!chatElement) {
+      prevMessageCountRef.current = messages.length;
+      return;
+    }
+    const hasNewMessages = messages.length > prevMessageCountRef.current;
+    if (hasNewMessages) {
+      if (shouldAutoScrollChatRef.current) {
+        scrollChatToBottom();
+        setUnreadChatCount(0);
+      } else {
+        setUnreadChatCount((previous) => previous + (messages.length - prevMessageCountRef.current));
+      }
+    }
+    prevMessageCountRef.current = messages.length;
+  }, [messages, scrollChatToBottom]);
 
   useEffect(() => {
     if (!roomId || !isLive) {
@@ -1087,6 +1127,7 @@ export default function ViewerRoomClientPage() {
         !messageIdsRef.current.has(insertedMessage.id) &&
         isRoomMessageAtOrAfterLiveStart(insertedMessage.created_at, viewerLiveStartedAt)
       ) {
+        shouldAutoScrollChatRef.current = true;
         mergeMessages([
           {
             id: insertedMessage.id,
@@ -1097,7 +1138,7 @@ export default function ViewerRoomClientPage() {
             createdAt: insertedMessage.created_at,
           },
         ]);
-        scrollMessagesToBottom();
+        setUnreadChatCount(0);
       }
 
       setChatBody("");
@@ -1493,6 +1534,42 @@ export default function ViewerRoomClientPage() {
     };
   }, [giftEvents]);
 
+  useEffect(() => {
+    const giftsElement = giftsScrollRef.current;
+    if (!giftsElement) {
+      prevGiftEventCountRef.current = giftEvents.length;
+      return;
+    }
+    const hasNewGiftEvents = giftEvents.length > prevGiftEventCountRef.current;
+    if (hasNewGiftEvents && isNearBottom(giftsElement)) {
+      requestAnimationFrame(() => {
+        giftsElement.scrollTop = giftsElement.scrollHeight;
+      });
+    }
+    prevGiftEventCountRef.current = giftEvents.length;
+  }, [giftEvents, isNearBottom]);
+
+  useEffect(() => {
+    const nextContainer =
+      activeTab === "chat"
+        ? chatScrollRef.current
+        : activeTab === "gift"
+          ? giftsScrollRef.current
+          : participantsScrollRef.current;
+    if (!nextContainer) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      nextContainer.scrollTop = tabScrollPositionsRef.current[activeTab];
+      if (activeTab === "chat") {
+        shouldAutoScrollChatRef.current = isNearBottom(nextContainer);
+        if (shouldAutoScrollChatRef.current) {
+          setUnreadChatCount(0);
+        }
+      }
+    });
+  }, [activeTab, isNearBottom]);
+
   if (state.isLoading) {
     return (
       <main className="min-h-screen bg-cyan-100 px-4 py-6 text-slate-800 sm:px-6">
@@ -1595,7 +1672,7 @@ export default function ViewerRoomClientPage() {
             </div>
           </div>
 
-          <div className="mt-3 grid shrink-0 gap-2 sm:grid-cols-4">
+          <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
             <button className="rounded-2xl bg-yellow-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
               CANLI DESTEK
             </button>
@@ -1644,34 +1721,10 @@ export default function ViewerRoomClientPage() {
               Yayıncı şu anda özel görüşmede.
             </p>
           ) : null}
-          {activePrivateSession ? (
-            <PrivateRoomSessionPanel
-              sessionId={activePrivateSession.sessionId}
-              viewerName={activePrivateSession.viewerName}
-              streamerName={activePrivateSession.streamerName}
-              startedAt={activePrivateSession.startedAt}
-              currentUserRole="viewer"
-              viewerReady={activePrivateSession.viewerReady}
-              streamerReady={activePrivateSession.streamerReady}
-              viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
-              initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
-              lowBalanceThresholdMinutes={2}
-              autoEndWhenBalanceLikelyDepleted
-              onAutoEnd={() => endPrivateSession("balance_depleted")}
-              autoEndReason="Süre bittiği için özel oda kapatılıyor..."
-              onEnd={() => endPrivateSession()}
-              onReadyChange={updatePrivateSessionReadyState}
-              isEnding={isPrivateSessionEnding}
-              resultText={privateSessionResult ?? undefined}
-              errorText={privateSessionError ?? undefined}
-              onSendSignal={privateRoomSignaling.sendSignal}
-              lastSignal={privateRoomSignaling.lastSignal}
-              lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
-              signalCount={privateRoomSignaling.signalCount}
-              lastSignalAt={privateRoomSignaling.lastSignalAt}
-              signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
-              currentUserId={state.userId}
-            />
+          {isRoomPrivateBusy ? (
+            <p className="mt-1 text-xs text-zinc-600">
+              Bu sırada sohbet, hediye gönderimi ve özel oda daveti geçici olarak kapalıdır.
+            </p>
           ) : null}
           {!activePrivateSession && privateSessionResult ? (
             <PrivateSessionEndedSummary role="viewer" resultText={privateSessionResult} summary={privateSessionCloseSummary} />
@@ -1689,7 +1742,7 @@ export default function ViewerRoomClientPage() {
               type="button"
               data-testid="room-tab-chat"
               onClick={() => setActiveTab("chat")}
-              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
+              className={`relative min-w-[110px] flex-none whitespace-nowrap rounded-xl px-2 py-3 text-sm font-black transition sm:min-w-0 sm:flex-1 ${
                 activeTab === "chat" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1700,7 +1753,7 @@ export default function ViewerRoomClientPage() {
               type="button"
               data-testid="room-tab-participants"
               onClick={() => setActiveTab("participants")}
-              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
+              className={`relative min-w-[110px] flex-none whitespace-nowrap rounded-xl px-2 py-3 text-sm font-black transition sm:min-w-0 sm:flex-1 ${
                 activeTab === "participants" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1712,7 +1765,7 @@ export default function ViewerRoomClientPage() {
               type="button"
               data-testid="room-tab-gifts"
               onClick={() => setActiveTab("gift")}
-              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
+              className={`relative min-w-[110px] flex-none whitespace-nowrap rounded-xl px-2 py-3 text-sm font-black transition sm:min-w-0 sm:flex-1 ${
                 activeTab === "gift" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1725,9 +1778,16 @@ export default function ViewerRoomClientPage() {
             {activeTab === "chat" ? "Sohbet" : activeTab === "participants" ? "Odadakiler" : "Hediye Katalogu"}
           </div>
 
-          <div ref={messagesContainerRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-            {activeTab === "gift" ? (
-              !state.isLoggedIn ? (
+          {activeTab === "gift" ? (
+            <div
+              ref={giftsScrollRef}
+              onScroll={(event) => {
+                tabScrollPositionsRef.current.gift = event.currentTarget.scrollTop;
+              }}
+              className="min-h-[220px] max-h-[46dvh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:min-h-0 lg:max-h-none lg:flex-1"
+              data-testid="room-tabpanel-gifts"
+            >
+              {!state.isLoggedIn ? (
                 <div className="rounded-2xl border border-pink-100 bg-white p-5 text-center">
                   <p className="text-sm font-semibold text-zinc-700">Hediye gondermek icin giris yapmalisin.</p>
                   <Link
@@ -1788,8 +1848,17 @@ export default function ViewerRoomClientPage() {
                     )}
                   </section>
                 </div>
-              )
-            ) : activeTab === "participants" ? (
+              )}
+            </div>
+          ) : activeTab === "participants" ? (
+            <div
+              ref={participantsScrollRef}
+              onScroll={(event) => {
+                tabScrollPositionsRef.current.participants = event.currentTarget.scrollTop;
+              }}
+              className="min-h-[220px] max-h-[46dvh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:min-h-0 lg:max-h-none lg:flex-1"
+              data-testid="room-tabpanel-participants"
+            >
               <section className="rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
@@ -1822,7 +1891,22 @@ export default function ViewerRoomClientPage() {
                   </p>
                 ) : null}
               </section>
-            ) : (
+            </div>
+          ) : (
+            <div
+              ref={chatScrollRef}
+              onScroll={(event) => {
+                const element = event.currentTarget;
+                tabScrollPositionsRef.current.chat = element.scrollTop;
+                const nextNearBottom = isNearBottom(element);
+                shouldAutoScrollChatRef.current = nextNearBottom;
+                if (nextNearBottom) {
+                  setUnreadChatCount(0);
+                }
+              }}
+              className="min-h-[220px] max-h-[46dvh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:min-h-0 lg:max-h-none lg:flex-1"
+              data-testid="room-tabpanel-chat"
+            >
               <div data-testid="room-chat-message-list">
                 {messages.length === 0 ? (
                   <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
@@ -1848,9 +1932,24 @@ export default function ViewerRoomClientPage() {
                   </div>
                 )}
               </div>
-            )}
+              {unreadChatCount > 0 ? (
+                <button
+                  type="button"
+                  data-testid="room-chat-new-messages-indicator"
+                  onClick={() => {
+                    shouldAutoScrollChatRef.current = true;
+                    scrollChatToBottom();
+                    setUnreadChatCount(0);
+                  }}
+                  className="sticky bottom-3 mx-auto mt-3 block rounded-full bg-pink-500 px-3 py-1.5 text-xs font-bold text-white shadow"
+                >
+                  Yeni mesajlar ({unreadChatCount})
+                </button>
+              ) : null}
+            </div>
+          )}
 
-            {activeTab === "chat" && !state.isLoggedIn ? (
+          {activeTab === "chat" && !state.isLoggedIn ? (
               <div className="mt-4 rounded-2xl border border-pink-100 bg-white p-4 text-center">
                 <p className="text-sm font-semibold text-zinc-700">Sohbete katilmak icin giris yapmalisin.</p>
                 <Link
@@ -1860,10 +1959,9 @@ export default function ViewerRoomClientPage() {
                   Uye girisi
                 </Link>
               </div>
-            ) : null}
-          </div>
+          ) : null}
 
-          <div className="shrink-0 border-t border-zinc-200 p-4">
+          <div className="shrink-0 border-t border-zinc-200 p-3 sm:p-4">
             <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
               <input
                 data-testid="room-chat-input"
@@ -1954,6 +2052,49 @@ export default function ViewerRoomClientPage() {
               )}
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {activePrivateSession ? (
+        <div className="fixed inset-x-3 bottom-3 top-20 z-40 md:inset-x-6 lg:inset-x-10 lg:top-24">
+          <section className="mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-violet-300 bg-white/95 shadow-2xl backdrop-blur">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-100 px-3 py-2 sm:px-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-600">Özel görüşme modu</p>
+                <h2 className="text-sm font-black text-zinc-900 sm:text-base">{activePrivateSession.streamerName} ile özel oda aktif</h2>
+              </div>
+              <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">Hazırlık ve bağlantı</span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-2 sm:p-3">
+              <PrivateRoomSessionPanel
+                sessionId={activePrivateSession.sessionId}
+                viewerName={activePrivateSession.viewerName}
+                streamerName={activePrivateSession.streamerName}
+                startedAt={activePrivateSession.startedAt}
+                currentUserRole="viewer"
+                viewerReady={activePrivateSession.viewerReady}
+                streamerReady={activePrivateSession.streamerReady}
+                viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
+                initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
+                lowBalanceThresholdMinutes={2}
+                autoEndWhenBalanceLikelyDepleted
+                onAutoEnd={() => endPrivateSession("balance_depleted")}
+                autoEndReason="Süre bittiği için özel oda kapatılıyor..."
+                onEnd={() => endPrivateSession()}
+                onReadyChange={updatePrivateSessionReadyState}
+                isEnding={isPrivateSessionEnding}
+                resultText={privateSessionResult ?? undefined}
+                errorText={privateSessionError ?? undefined}
+                onSendSignal={privateRoomSignaling.sendSignal}
+                lastSignal={privateRoomSignaling.lastSignal}
+                lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
+                signalCount={privateRoomSignaling.signalCount}
+                lastSignalAt={privateRoomSignaling.lastSignalAt}
+                signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
+                currentUserId={state.userId}
+              />
+            </div>
+          </section>
         </div>
       ) : null}
 

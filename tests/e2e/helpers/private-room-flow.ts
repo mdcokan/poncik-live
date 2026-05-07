@@ -28,6 +28,12 @@ export type CleanupPrivateRoomFlowOpts = {
   memberPage?: Page;
 };
 
+export type WaitForViewerPrivateSessionPanelAfterAcceptOptions = {
+  memberPage: Page;
+  request: APIRequestContext;
+  timeoutMs?: number;
+};
+
 /** Best-effort fixture reset after private-room tests (same as `normalizeTestFixtures`). */
 export async function cleanupPrivateRoomFlow(opts: CleanupPrivateRoomFlowOpts): Promise<void> {
   await normalizeTestFixtures(opts.request).catch(() => {});
@@ -141,6 +147,33 @@ async function waitForActivePrivateSessionApi(
     throw new Error(`${roleLabel}: aktif oturum ID alınamadı.`);
   }
   return lastSid;
+}
+
+export async function waitForViewerPrivateSessionPanelAfterAccept({
+  memberPage,
+  request,
+  timeoutMs = 45_000,
+}: WaitForViewerPrivateSessionPanelAfterAcceptOptions): Promise<string> {
+  const activeSessionId = await waitForActivePrivateSessionApi(request, memberPage, "member (Veli)", timeoutMs);
+
+  const memberPanel = memberPage.getByTestId("private-session-panel");
+  await expect(memberPanel).toBeVisible({ timeout: timeoutMs });
+
+  await expect
+    .poll(
+      async () => {
+        const panelSessionId = (await memberPanel.getAttribute("data-session-id"))?.trim() ?? "";
+        return panelSessionId.length > 0 ? panelSessionId : null;
+      },
+      {
+        timeout: timeoutMs,
+        intervals: [250, 500, 1000],
+        message: "Veli: private-session-panel data-session-id dolu olmalı.",
+      },
+    )
+    .toBe(activeSessionId);
+
+  return activeSessionId;
 }
 
 /**

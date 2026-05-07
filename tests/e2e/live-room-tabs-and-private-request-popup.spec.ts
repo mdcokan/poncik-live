@@ -78,6 +78,11 @@ test("viewer/studio tabs and private request popup flow", async ({ browser, requ
 
     await expect(streamerPage.getByTestId("studio-private-request-modal")).toBeVisible({ timeout: 30_000 });
     await expect(streamerPage.getByTestId("studio-private-request-viewer-name")).toContainText(/Veli/i);
+    await streamerPage.getByTestId("studio-private-request-close-button").click();
+    await expect(streamerPage.getByTestId("studio-private-request-modal")).toHaveCount(0);
+    await expect(streamerPage.getByTestId("studio-private-request-reopen-badge")).toBeVisible();
+    await streamerPage.getByTestId("studio-private-request-reopen-badge").click();
+    await expect(streamerPage.getByTestId("studio-private-request-modal")).toBeVisible();
     await streamerPage.getByTestId("studio-private-request-accept-button").click();
 
     await streamerPage.getByTestId("studio-tab-chat").click();

@@ -132,6 +132,7 @@ type PrivateRoomSessionRealtimeRow = {
 };
 
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
+const CHAT_AUTO_SCROLL_THRESHOLD_PX = 80;
 
 function getPresenceRoleLabel(role: string) {
   if (role === "streamer") {
@@ -208,6 +209,7 @@ export default function StudioPage() {
   const [privateRequestsFeedback, setPrivateRequestsFeedback] = useState<string | null>(null);
   const [privateRequestDecidingId, setPrivateRequestDecidingId] = useState<string | null>(null);
   const [showPrivateRequestModal, setShowPrivateRequestModal] = useState(false);
+  const [hasDismissedPendingRequestModal, setHasDismissedPendingRequestModal] = useState(false);
   const [activePrivateSession, setActivePrivateSession] = useState<PrivateSessionSummary | null>(null);
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
@@ -226,13 +228,24 @@ export default function StudioPage() {
     sessionId: activePrivateSession?.sessionId ?? "",
     enabled: Boolean(activePrivateSession?.sessionId),
   });
-  const roomMessagesRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const giftsScrollRef = useRef<HTMLDivElement | null>(null);
+  const participantsScrollRef = useRef<HTMLDivElement | null>(null);
   const messageIdsRef = useRef(new Set<string>());
   const roomChatEpochRef = useRef<string>("");
   const refreshDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const giftOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestGiftEventIdRef = useRef<string | null>(null);
+  const tabScrollPositionsRef = useRef<{ chat: number; gift: number; participants: number }>({
+    chat: 0,
+    gift: 0,
+    participants: 0,
+  });
+  const prevMessageCountRef = useRef(0);
+  const prevGiftEventCountRef = useRef(0);
+  const shouldAutoScrollChatRef = useRef(true);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   function getGiftMinuteCost(gift: GiftCatalogItem) {
     return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
@@ -326,8 +339,13 @@ export default function StudioPage() {
     loadUser();
   }, []);
 
+  const isNearBottom = useCallback((element: HTMLDivElement) => {
+    const distance = element.scrollHeight - (element.scrollTop + element.clientHeight);
+    return distance <= CHAT_AUTO_SCROLL_THRESHOLD_PX;
+  }, []);
+
   const scrollMessagesToBottom = useCallback(() => {
-    const element = roomMessagesRef.current;
+    const element = chatScrollRef.current;
     if (!element) {
       return;
     }
@@ -377,13 +395,14 @@ export default function StudioPage() {
     try {
       const supabase = getSupabase();
       const fetchedMessages = await fetchRoomMessages(activeRoom.id, 50, supabase, activeRoom.liveStartedAt);
+      const chatElement = chatScrollRef.current;
+      shouldAutoScrollChatRef.current = !chatElement || isNearBottom(chatElement);
       setRoomMessages(fetchedMessages);
       messageIdsRef.current = new Set(fetchedMessages.map((roomMessage) => roomMessage.id));
-      scrollMessagesToBottom();
     } finally {
       setChatRefreshing(false);
     }
-  }, [activeRoom?.id, activeRoom?.liveStartedAt, activeRoom?.status, chatRefreshing, scrollMessagesToBottom]);
+  }, [activeRoom?.id, activeRoom?.liveStartedAt, activeRoom?.status, chatRefreshing, isNearBottom]);
 
   const scheduleRefreshMessages = useCallback(
     (delayMs = 150) => {
@@ -703,6 +722,8 @@ export default function StudioPage() {
       roomChatEpochRef.current = "";
       setRoomMessages([]);
       messageIdsRef.current = new Set();
+      prevMessageCountRef.current = 0;
+      setUnreadChatCount(0);
       return;
     }
     const epoch = `${activeRoom.id}:${activeRoom.status}:${activeRoom.liveStartedAt ?? ""}`;
@@ -710,9 +731,29 @@ export default function StudioPage() {
       roomChatEpochRef.current = epoch;
       setRoomMessages([]);
       messageIdsRef.current = new Set();
+      prevMessageCountRef.current = 0;
+      setUnreadChatCount(0);
     }
     void refreshMessages();
   }, [activeRoom?.id, activeRoom?.liveStartedAt, activeRoom?.status, refreshMessages]);
+
+  useEffect(() => {
+    const chatElement = chatScrollRef.current;
+    if (!chatElement) {
+      prevMessageCountRef.current = roomMessages.length;
+      return;
+    }
+    const hasNewMessages = roomMessages.length > prevMessageCountRef.current;
+    if (hasNewMessages) {
+      if (shouldAutoScrollChatRef.current) {
+        scrollMessagesToBottom();
+        setUnreadChatCount(0);
+      } else {
+        setUnreadChatCount((previous) => previous + (roomMessages.length - prevMessageCountRef.current));
+      }
+    }
+    prevMessageCountRef.current = roomMessages.length;
+  }, [roomMessages, scrollMessagesToBottom]);
 
   useEffect(() => {
     if (!activeRoom?.id || activeRoom.status !== "live") {
@@ -734,8 +775,19 @@ export default function StudioPage() {
     if (!pendingPrivateRequest || activePrivateSession) {
       return;
     }
+    if (hasDismissedPendingRequestModal) {
+      return;
+    }
     setShowPrivateRequestModal(true);
-  }, [activePrivateSession, pendingPrivateRequest?.id]);
+  }, [activePrivateSession, hasDismissedPendingRequestModal, pendingPrivateRequest?.id]);
+
+  useEffect(() => {
+    if (!pendingPrivateRequest) {
+      setHasDismissedPendingRequestModal(false);
+      return;
+    }
+    setHasDismissedPendingRequestModal(false);
+  }, [pendingPrivateRequest?.id]);
 
   useEffect(() => {
     if (!activeRoom?.id || !ownerId || activeRoom.status !== "live") {
@@ -831,6 +883,19 @@ export default function StudioPage() {
 
     return () => {
       void supabase.removeChannel(channel);
+    };
+  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+
+  useEffect(() => {
+    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
+      return;
+    }
+
+    const syncTimer = setInterval(() => {
+      void fetchPrivateRequests();
+    }, 3000);
+    return () => {
+      clearInterval(syncTimer);
     };
   }, [activeRoom?.id, activeRoom?.status, ownerId]);
 
@@ -938,6 +1003,7 @@ export default function StudioPage() {
         !messageIdsRef.current.has(insertedMessage.id) &&
         isRoomMessageAtOrAfterLiveStart(insertedMessage.created_at, activeRoom?.liveStartedAt)
       ) {
+        shouldAutoScrollChatRef.current = true;
         mergeMessages([
           {
             id: insertedMessage.id,
@@ -949,6 +1015,7 @@ export default function StudioPage() {
           },
         ]);
         scrollMessagesToBottom();
+        setUnreadChatCount(0);
       }
 
       setChatBody("");
@@ -1416,6 +1483,42 @@ export default function StudioPage() {
     };
   }, [giftEvents]);
 
+  useEffect(() => {
+    const giftsElement = giftsScrollRef.current;
+    if (!giftsElement) {
+      prevGiftEventCountRef.current = giftEvents.length;
+      return;
+    }
+    const hasNewGiftEvents = giftEvents.length > prevGiftEventCountRef.current;
+    if (hasNewGiftEvents && isNearBottom(giftsElement)) {
+      requestAnimationFrame(() => {
+        giftsElement.scrollTop = giftsElement.scrollHeight;
+      });
+    }
+    prevGiftEventCountRef.current = giftEvents.length;
+  }, [giftEvents, isNearBottom]);
+
+  useEffect(() => {
+    const nextContainer =
+      activeTab === "chat"
+        ? chatScrollRef.current
+        : activeTab === "gift"
+          ? giftsScrollRef.current
+          : participantsScrollRef.current;
+    if (!nextContainer) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      nextContainer.scrollTop = tabScrollPositionsRef.current[activeTab];
+      if (activeTab === "chat") {
+        shouldAutoScrollChatRef.current = isNearBottom(nextContainer);
+        if (shouldAutoScrollChatRef.current) {
+          setUnreadChatCount(0);
+        }
+      }
+    });
+  }, [activeTab, isNearBottom]);
+
   return (
     <main className="min-h-screen bg-[#eef7fb] text-zinc-900 lg:h-[100dvh] lg:overflow-hidden">
       <header className="relative z-[100] h-16 border-b border-pink-100/80 bg-white/80 backdrop-blur">
@@ -1722,7 +1825,7 @@ export default function StudioPage() {
                 </div>
               ) : null}
 
-              <div className="grid shrink-0 gap-2 sm:grid-cols-3">
+              <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3">
                 <button className="rounded-2xl bg-yellow-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
                   CANLI DESTEK
                 </button>
@@ -1748,7 +1851,7 @@ export default function StudioPage() {
               type="button"
               data-testid="studio-tab-chat"
               onClick={() => setActiveTab("chat")}
-              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
+              className={`relative min-w-[110px] flex-none whitespace-nowrap rounded-xl px-2 py-3 text-sm font-black transition sm:min-w-0 sm:flex-1 ${
                 activeTab === "chat" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1759,7 +1862,7 @@ export default function StudioPage() {
               type="button"
               data-testid="studio-tab-participants"
               onClick={() => setActiveTab("participants")}
-              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
+              className={`relative min-w-[110px] flex-none whitespace-nowrap rounded-xl px-2 py-3 text-sm font-black transition sm:min-w-0 sm:flex-1 ${
                 activeTab === "participants" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1771,7 +1874,7 @@ export default function StudioPage() {
               type="button"
               data-testid="studio-tab-gifts"
               onClick={() => setActiveTab("gift")}
-              className={`relative min-w-[120px] flex-1 rounded-xl py-3 text-sm font-black transition ${
+              className={`relative min-w-[110px] flex-none whitespace-nowrap rounded-xl px-2 py-3 text-sm font-black transition sm:min-w-0 sm:flex-1 ${
                 activeTab === "gift" ? "text-pink-500" : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1784,9 +1887,16 @@ export default function StudioPage() {
             {activeTab === "chat" ? "Sohbet" : activeTab === "participants" ? "Odadakiler" : "Hediye Katalogu"}
           </div>
 
-          <div ref={roomMessagesRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-            {activeTab === "gift" ? (
-              isGiftCatalogLoading ? (
+          {activeTab === "gift" ? (
+            <div
+              ref={giftsScrollRef}
+              onScroll={(event) => {
+                tabScrollPositionsRef.current.gift = event.currentTarget.scrollTop;
+              }}
+              className="min-h-[220px] max-h-[46dvh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:min-h-0 lg:max-h-none lg:flex-1"
+              data-testid="studio-tabpanel-gifts"
+            >
+              {isGiftCatalogLoading ? (
                 <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-pink-100 bg-pink-50/45 p-5 text-center text-sm text-zinc-500">
                   Hediye katalogu yukleniyor...
                 </div>
@@ -1828,8 +1938,17 @@ export default function StudioPage() {
                     )}
                   </section>
                 </div>
-              )
-            ) : activeTab === "participants" ? (
+              )}
+            </div>
+          ) : activeTab === "participants" ? (
+            <div
+              ref={participantsScrollRef}
+              onScroll={(event) => {
+                tabScrollPositionsRef.current.participants = event.currentTarget.scrollTop;
+              }}
+              className="min-h-[220px] max-h-[46dvh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:min-h-0 lg:max-h-none lg:flex-1"
+              data-testid="studio-tabpanel-participants"
+            >
               <section className="rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Odadakiler</p>
@@ -1905,34 +2024,23 @@ export default function StudioPage() {
                 ) : null}
                 {moderationFeedback ? <p className="mt-2 text-xs text-zinc-600">{moderationFeedback}</p> : null}
               </section>
-            ) : (
+            </div>
+          ) : (
+            <div
+              ref={chatScrollRef}
+              onScroll={(event) => {
+                const element = event.currentTarget;
+                tabScrollPositionsRef.current.chat = element.scrollTop;
+                const nextNearBottom = isNearBottom(element);
+                shouldAutoScrollChatRef.current = nextNearBottom;
+                if (nextNearBottom) {
+                  setUnreadChatCount(0);
+                }
+              }}
+              className="min-h-[220px] max-h-[46dvh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:min-h-0 lg:max-h-none lg:flex-1"
+              data-testid="studio-tabpanel-chat"
+            >
               <div data-testid="room-chat-message-list">
-                {activePrivateSession ? (
-                  <PrivateRoomSessionPanel
-                    sessionId={activePrivateSession.sessionId}
-                    viewerName={activePrivateSession.viewerName}
-                    streamerName={activePrivateSession.streamerName}
-                    startedAt={activePrivateSession.startedAt}
-                    currentUserRole="streamer"
-                    viewerReady={activePrivateSession.viewerReady}
-                    streamerReady={activePrivateSession.streamerReady}
-                    viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
-                    initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
-                    autoEndWhenBalanceLikelyDepleted={false}
-                    onEnd={endPrivateSession}
-                    onReadyChange={updatePrivateSessionReadyState}
-                    isEnding={isPrivateSessionEnding}
-                    resultText={privateSessionResult ?? undefined}
-                    errorText={privateSessionError ?? undefined}
-                    onSendSignal={privateRoomSignaling.sendSignal}
-                    lastSignal={privateRoomSignaling.lastSignal}
-                    lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
-                    signalCount={privateRoomSignaling.signalCount}
-                    lastSignalAt={privateRoomSignaling.lastSignalAt}
-                    signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
-                    currentUserId={ownerId}
-                  />
-                ) : null}
                 {!activePrivateSession && privateSessionResult ? (
                   <PrivateSessionEndedSummary
                     role="streamer"
@@ -1972,10 +2080,24 @@ export default function StudioPage() {
                   </div>
                 )}
               </div>
-            )}
-          </div>
+              {unreadChatCount > 0 ? (
+                <button
+                  type="button"
+                  data-testid="studio-chat-new-messages-indicator"
+                  onClick={() => {
+                    shouldAutoScrollChatRef.current = true;
+                    scrollMessagesToBottom();
+                    setUnreadChatCount(0);
+                  }}
+                  className="sticky bottom-3 mx-auto mt-3 block rounded-full bg-pink-500 px-3 py-1.5 text-xs font-bold text-white shadow"
+                >
+                  Yeni mesajlar ({unreadChatCount})
+                </button>
+              ) : null}
+            </div>
+          )}
 
-          <div className="shrink-0 border-t border-zinc-200 p-4">
+          <div className="shrink-0 border-t border-zinc-200 p-3 sm:p-4">
             <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
               <input
                 data-testid="room-chat-input"
@@ -2024,69 +2146,114 @@ export default function StudioPage() {
         </aside>
       </section>
 
-      {pendingPrivateRequest && !activePrivateSession ? (
-        <>
-          <button
-            type="button"
-            data-testid="studio-private-request-pending-badge"
-            onClick={() => setShowPrivateRequestModal(true)}
-            className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-violet-600 px-3 py-2 text-xs font-bold text-white shadow-lg hover:bg-violet-500"
-          >
-            Özel oda daveti
-            <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px]">{privateRequests.length}</span>
-          </button>
-          {showPrivateRequestModal ? (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
-              <section className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" data-testid="studio-private-request-modal">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-black text-zinc-900">Özel oda daveti</h2>
-                    <p className="mt-2 text-sm text-zinc-600">
-                      <span data-testid="studio-private-request-viewer-name">{pendingPrivateRequest.viewerName}</span> seninle özel görüşme başlatmak
-                      istiyor.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    data-testid="studio-private-request-close-button"
-                    onClick={() => setShowPrivateRequestModal(false)}
-                    className="rounded-full border border-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
-                  >
-                    Kapat
-                  </button>
-                </div>
-                {pendingPrivateRequest.viewerNote ? <p className="mt-3 text-xs text-zinc-600">{pendingPrivateRequest.viewerNote}</p> : null}
-                {privateRequestsFeedback ? <p className="mt-3 text-xs text-rose-600">{privateRequestsFeedback}</p> : null}
-                <div className="mt-4 flex gap-2">
-                  <button
-                    type="button"
-                    data-testid="studio-private-request-accept-button"
-                    onClick={() => {
-                      void handleDecidePrivateRequest(pendingPrivateRequest.id, "accepted");
-                      setShowPrivateRequestModal(false);
-                    }}
-                    disabled={privateRequestDecidingId === pendingPrivateRequest.id}
-                    className="rounded-lg bg-emerald-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                  >
-                    Kabul Et
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="studio-private-request-reject-button"
-                    onClick={() => {
-                      void handleDecidePrivateRequest(pendingPrivateRequest.id, "rejected");
-                      setShowPrivateRequestModal(false);
-                    }}
-                    disabled={privateRequestDecidingId === pendingPrivateRequest.id}
-                    className="rounded-lg bg-rose-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                  >
-                    Reddet
-                  </button>
-                </div>
-              </section>
+      {activePrivateSession ? (
+        <div className="fixed inset-x-3 bottom-3 top-20 z-40 md:inset-x-6 lg:inset-x-10 lg:top-24">
+          <section className="mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-violet-300 bg-white/95 shadow-2xl backdrop-blur">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-100 px-3 py-2 sm:px-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-600">Özel görüşme modu</p>
+                <h2 className="text-sm font-black text-zinc-900 sm:text-base">{activePrivateSession.viewerName} ile özel oda aktif</h2>
+              </div>
+              <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">Bağlantı ve hazırlık paneli</span>
             </div>
-          ) : null}
-        </>
+            <div className="min-h-0 flex-1 overflow-y-auto p-2 sm:p-3">
+              <PrivateRoomSessionPanel
+                sessionId={activePrivateSession.sessionId}
+                viewerName={activePrivateSession.viewerName}
+                streamerName={activePrivateSession.streamerName}
+                startedAt={activePrivateSession.startedAt}
+                currentUserRole="streamer"
+                viewerReady={activePrivateSession.viewerReady}
+                streamerReady={activePrivateSession.streamerReady}
+                viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
+                initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
+                autoEndWhenBalanceLikelyDepleted={false}
+                onEnd={endPrivateSession}
+                onReadyChange={updatePrivateSessionReadyState}
+                isEnding={isPrivateSessionEnding}
+                resultText={privateSessionResult ?? undefined}
+                errorText={privateSessionError ?? undefined}
+                onSendSignal={privateRoomSignaling.sendSignal}
+                lastSignal={privateRoomSignaling.lastSignal}
+                lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
+                signalCount={privateRoomSignaling.signalCount}
+                lastSignalAt={privateRoomSignaling.lastSignalAt}
+                signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
+                currentUserId={ownerId}
+              />
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {pendingPrivateRequest && !activePrivateSession && showPrivateRequestModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+          <section className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" data-testid="studio-private-request-modal">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-black text-zinc-900">Özel oda daveti</h2>
+                <p className="mt-2 text-sm text-zinc-600">
+                  <span data-testid="studio-private-request-viewer-name">{pendingPrivateRequest.viewerName}</span> seninle özel görüşme başlatmak
+                  istiyor.
+                </p>
+                <p className="mt-1 text-xs text-zinc-500">Kısa açıklama: {pendingPrivateRequest.viewerNote?.trim() || "Özel görüşme talebi"}</p>
+              </div>
+              <button
+                type="button"
+                data-testid="studio-private-request-close-button"
+                onClick={() => {
+                  setShowPrivateRequestModal(false);
+                  setHasDismissedPendingRequestModal(true);
+                }}
+                className="rounded-full border border-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+              >
+                Kapat
+              </button>
+            </div>
+            {privateRequestsFeedback ? <p className="mt-3 text-xs text-rose-600">{privateRequestsFeedback}</p> : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-testid="studio-private-request-accept-button"
+                onClick={() => {
+                  void handleDecidePrivateRequest(pendingPrivateRequest.id, "accepted");
+                  setShowPrivateRequestModal(false);
+                  setHasDismissedPendingRequestModal(false);
+                }}
+                disabled={privateRequestDecidingId === pendingPrivateRequest.id}
+                className="rounded-lg bg-emerald-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                Kabul Et
+              </button>
+              <button
+                type="button"
+                data-testid="studio-private-request-reject-button"
+                onClick={() => {
+                  void handleDecidePrivateRequest(pendingPrivateRequest.id, "rejected");
+                  setShowPrivateRequestModal(false);
+                  setHasDismissedPendingRequestModal(false);
+                }}
+                disabled={privateRequestDecidingId === pendingPrivateRequest.id}
+                className="rounded-lg bg-rose-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                Reddet
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {pendingPrivateRequest && !activePrivateSession && !showPrivateRequestModal ? (
+        <button
+          type="button"
+          data-testid="studio-private-request-reopen-badge"
+          onClick={() => {
+            setShowPrivateRequestModal(true);
+            setHasDismissedPendingRequestModal(false);
+          }}
+          className="fixed bottom-4 right-4 z-40 rounded-full border border-violet-200 bg-violet-500 px-4 py-2 text-xs font-black text-white shadow-lg transition hover:bg-violet-400"
+        >
+          Özel oda talebi (1)
+        </button>
       ) : null}
 
       {showDmOverlay ? (
