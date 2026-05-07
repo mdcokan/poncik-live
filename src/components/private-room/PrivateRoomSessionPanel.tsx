@@ -409,7 +409,7 @@ export default function PrivateRoomSessionPanel({
         {sessionGuidanceText}
       </p>
 
-      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
         {currentUserRole === "streamer" ? (
           <>
             <PrivateRoomMediaPrep
@@ -685,7 +685,7 @@ export default function PrivateRoomSessionPanel({
         disabled={isEnding || isAutoEnding}
         className="mt-4 rounded-xl bg-rose-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {isEnding ? "Bitiriliyor..." : "Özel Odayı Bitir"}
+        {isEnding ? "Bitiriliyor..." : "Görüşmeyi Bitir"}
       </button>
 
       {resultText ? (
