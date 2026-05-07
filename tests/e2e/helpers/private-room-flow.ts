@@ -34,6 +34,32 @@ export type WaitForViewerPrivateSessionPanelAfterAcceptOptions = {
   timeoutMs?: number;
 };
 
+async function requestWithTransientEconnresetRetry(
+  request: APIRequestContext,
+  path: string,
+  token: string,
+  maxAttempts = 3,
+) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await request.get(path, {
+        headers: { Authorization: `Bearer ${token}` },
+        failOnStatusCode: false,
+      });
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const isTransientEconnreset = /ECONNRESET/i.test(message);
+      if (!isTransientEconnreset || attempt === maxAttempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Unknown request failure.");
+}
+
 /** Best-effort fixture reset after private-room tests (same as `normalizeTestFixtures`). */
 export async function cleanupPrivateRoomFlow(opts: CleanupPrivateRoomFlowOpts): Promise<void> {
   await normalizeTestFixtures(opts.request).catch(() => {});
@@ -56,10 +82,7 @@ export async function waitForMemberPrivatePanelSessionMatchesActiveApi(
         if (!token || !panelId) {
           return null;
         }
-        const res = await request.get("/api/private-sessions/active", {
-          headers: { Authorization: `Bearer ${token}` },
-          failOnStatusCode: false,
-        });
+        const res = await requestWithTransientEconnresetRetry(request, "/api/private-sessions/active", token);
         if (!res.ok()) {
           return null;
         }
@@ -88,10 +111,7 @@ export async function waitForFixtureMemberNoActivePrivateSession(
         if (!token) {
           return false;
         }
-        const res = await request.get("/api/private-sessions/active", {
-          headers: { Authorization: `Bearer ${token}` },
-          failOnStatusCode: false,
-        });
+        const res = await requestWithTransientEconnresetRetry(request, "/api/private-sessions/active", token);
         if (!res.ok()) {
           return false;
         }
@@ -121,10 +141,7 @@ async function waitForActivePrivateSessionApi(
         if (!token) {
           return null;
         }
-        const res = await request.get("/api/private-sessions/active", {
-          headers: { Authorization: `Bearer ${token}` },
-          failOnStatusCode: false,
-        });
+        const res = await requestWithTransientEconnresetRetry(request, "/api/private-sessions/active", token);
         if (!res.ok()) {
           return null;
         }
@@ -213,9 +230,12 @@ export async function createPrivateSessionForEdaAndVeli(
     const privateRequestButton = memberPage.getByTestId("private-room-request-button");
     await expect(privateRequestButton).toBeEnabled({ timeout: 60_000 });
     await privateRequestButton.click();
-    await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
+    await expect(memberPage.getByTestId("private-request-feedback")).toContainText(
+      /g[oö]nderildi|bekleniyor|onay[ıi] bekleniyor|davet/i,
+      { timeout: 20_000 },
+    );
 
-    const acceptButton = streamerPage.getByTestId("accept-private-request-button").first();
+    const acceptButton = streamerPage.getByTestId("studio-private-request-accept-button").first();
     await expect(acceptButton).toBeVisible({ timeout: 25_000 });
     await acceptButton.click();
 

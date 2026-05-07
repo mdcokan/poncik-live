@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { areTestRoutesEnabled } from "@/lib/test-routes";
 
 const ADMIN_EMAIL = "admin@test.com";
 const FIXTURE_PASSWORD = "123123";
@@ -22,7 +23,7 @@ function forbiddenInProduction() {
 }
 
 export async function POST(request: Request) {
-  if (process.env.NODE_ENV === "production") {
+  if (!areTestRoutesEnabled()) {
     return forbiddenInProduction();
   }
 

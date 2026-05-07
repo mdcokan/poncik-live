@@ -2,6 +2,7 @@ import type { APIRequestContext } from "@playwright/test";
 
 type NormalizeFixtureOptions = {
   viewerBalanceMinutes?: number;
+  privateRoomPricePerMinute?: number;
 };
 
 export type NormalizeFixturesSnapshot = {
@@ -24,6 +25,9 @@ export type NormalizeFixturesSnapshot = {
     presenceRowsDeleted: number;
     liveRoomsClosedForEda: number;
   };
+  privateRoomPricing: {
+    pricePerMinute: number;
+  };
 };
 
 export type NormalizeFixturesSuccess = {
@@ -44,8 +48,12 @@ export async function normalizeTestFixtures(
 
   if (!response.ok()) {
     const errorText = await response.text().catch(() => "<unable to read response>");
+    const runtimeHint =
+      response.status() === 404
+        ? " /api/test/normalize-fixtures returned 404. E2E server must run with ENABLE_TEST_ROUTES=true or non-production NODE_ENV."
+        : "";
     throw new Error(
-      `Fixture normalize request failed: status=${response.status()} body=${errorText.slice(0, 500)}`,
+      `Fixture normalize request failed: status=${response.status()} body=${errorText.slice(0, 500)}${runtimeHint}`,
     );
   }
 

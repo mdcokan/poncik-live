@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { areTestRoutesEnabled } from "@/lib/test-routes";
 
 type FixtureEmail = "admin@test.com" | "eda@test.com" | "veli@test.com";
 
@@ -31,7 +32,7 @@ function forbiddenInProduction() {
 }
 
 export async function POST(request: Request) {
-  if (process.env.NODE_ENV === "production") {
+  if (!areTestRoutesEnabled()) {
     return forbiddenInProduction();
   }
 
@@ -57,10 +58,14 @@ export async function POST(request: Request) {
 
   try {
     let requestedViewerBalanceMinutes: number | null = null;
+    let requestedPrivateRoomPricePerMinute: number | null = null;
     try {
-      const payload = (await request.json()) as { viewerBalanceMinutes?: unknown };
+      const payload = (await request.json()) as { viewerBalanceMinutes?: unknown; privateRoomPricePerMinute?: unknown };
       if (typeof payload?.viewerBalanceMinutes === "number" && Number.isFinite(payload.viewerBalanceMinutes)) {
         requestedViewerBalanceMinutes = Math.max(0, Math.floor(payload.viewerBalanceMinutes));
+      }
+      if (typeof payload?.privateRoomPricePerMinute === "number" && Number.isFinite(payload.privateRoomPricePerMinute)) {
+        requestedPrivateRoomPricePerMinute = Math.max(1, Math.floor(payload.privateRoomPricePerMinute));
       }
     } catch {
       requestedViewerBalanceMinutes = null;
@@ -183,7 +188,6 @@ export async function POST(request: Request) {
       .from("private_room_requests")
       .select("id")
       .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id)
-      .eq("viewer_id", fixtureUsers[VIEWER_EMAIL].id)
       .eq("status", "pending");
     if (pendingPrivateError) {
       throw new Error(`Failed to list fixture private room requests: ${pendingPrivateError.message}`);
@@ -211,13 +215,11 @@ export async function POST(request: Request) {
         })
       : null;
 
-    /** Only Eda (streamer) + Veli (viewer) pairs — avoids touching unrelated active sessions. */
     const { data: activePrivateSessions, error: activePrivateSessionsError } = await adminClient
       .from("private_room_sessions")
       .select("id")
       .eq("status", "active")
-      .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id)
-      .eq("viewer_id", fixtureUsers[VIEWER_EMAIL].id);
+      .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id);
     if (activePrivateSessionsError) {
       throw new Error(`Failed to list active private sessions: ${activePrivateSessionsError.message}`);
     }
@@ -247,7 +249,6 @@ export async function POST(request: Request) {
           })
           .eq("id", sessionRow.id)
           .eq("streamer_id", fixtureUsers[STREAMER_EMAIL].id)
-          .eq("viewer_id", fixtureUsers[VIEWER_EMAIL].id)
           .eq("status", "active")
           .select("id");
         if (forceEndError) {
@@ -321,6 +322,22 @@ export async function POST(request: Request) {
       }
     }
 
+    const targetPrivateRoomPricePerMinute = requestedPrivateRoomPricePerMinute ?? 1;
+    const { error: privateRoomPricingError } = await adminClient.from("platform_settings").upsert(
+      {
+        key: "private_room_pricing",
+        value: {
+          pricePerMinute: targetPrivateRoomPricePerMinute,
+          streamerSharePercent: 70,
+        },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "key" },
+    );
+    if (privateRoomPricingError) {
+      throw new Error(`Failed to normalize private room pricing: ${privateRoomPricingError.message}`);
+    }
+
     const { data: edaProfileSnapshot } = await adminClient
       .from("profiles")
       .select("role, is_banned, display_name")
@@ -361,6 +378,9 @@ export async function POST(request: Request) {
           pendingRequestsCancelled,
           presenceRowsDeleted,
           liveRoomsClosedForEda,
+        },
+        privateRoomPricing: {
+          pricePerMinute: targetPrivateRoomPricePerMinute,
         },
       },
     });
