@@ -78,6 +78,7 @@ type PrivateSessionSummary = {
   startedAt: string;
   viewerBalanceMinutes?: number;
   elapsedSeconds?: number;
+  pricePerMinute?: number;
   estimatedChargedMinutes?: number;
   estimatedRemainingMinutes?: number;
   isLowBalance?: boolean;
@@ -245,6 +246,7 @@ export default function StudioPage() {
   const prevMessageCountRef = useRef(0);
   const prevGiftEventCountRef = useRef(0);
   const shouldAutoScrollChatRef = useRef(true);
+  const privateRequestsFetchInFlightRef = useRef(false);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   function getGiftMinuteCost(gift: GiftCatalogItem) {
@@ -482,7 +484,7 @@ export default function StudioPage() {
       return;
     }
     setPresenceErrorMessage(null);
-  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+  }, [activePrivateSession?.sessionId, activeRoom?.id, activeRoom?.status, ownerId]);
 
   const removeStreamerPresence = useCallback(async () => {
     if (!activeRoom?.id || !ownerId) {
@@ -769,7 +771,7 @@ export default function StudioPage() {
       return;
     }
     void fetchPrivateRequests();
-  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+  }, [activePrivateSession?.sessionId, activeRoom?.id, activeRoom?.status, ownerId]);
 
   useEffect(() => {
     if (!pendingPrivateRequest || activePrivateSession) {
@@ -795,7 +797,7 @@ export default function StudioPage() {
       return;
     }
     void fetchActivePrivateSession();
-  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+  }, [activePrivateSession?.sessionId, activeRoom?.id, activeRoom?.status, ownerId]);
 
   useEffect(() => {
     if (!activeRoom?.id) {
@@ -860,7 +862,7 @@ export default function StudioPage() {
   }, [activeRoom?.id, scheduleRefreshPresence]);
 
   useEffect(() => {
-    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
+    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live" || Boolean(activePrivateSession?.sessionId)) {
       return;
     }
 
@@ -884,10 +886,10 @@ export default function StudioPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+  }, [activePrivateSession?.sessionId, activeRoom?.id, activeRoom?.status, ownerId]);
 
   useEffect(() => {
-    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
+    if (!ownerId || !activeRoom?.id || activeRoom.status !== "live" || Boolean(activePrivateSession?.sessionId)) {
       return;
     }
 
@@ -897,7 +899,7 @@ export default function StudioPage() {
     return () => {
       clearInterval(syncTimer);
     };
-  }, [activeRoom?.id, activeRoom?.status, ownerId]);
+  }, [activePrivateSession?.sessionId, activeRoom?.id, activeRoom?.status, ownerId]);
 
   useEffect(() => {
     if (!ownerId || !activeRoom?.id || activeRoom.status !== "live") {
@@ -1094,10 +1096,14 @@ export default function StudioPage() {
   }
 
   async function fetchPrivateRequests() {
-    if (!activeRoom?.id || !ownerId || activeRoom.status !== "live") {
-      setPrivateRequests([]);
+    if (!activeRoom?.id || !ownerId || activeRoom.status !== "live" || activePrivateSession?.sessionId) {
+      setPrivateRequests((previous) => (previous.length ? [] : previous));
       return;
     }
+    if (privateRequestsFetchInFlightRef.current) {
+      return;
+    }
+    privateRequestsFetchInFlightRef.current = true;
 
     try {
       const supabase = getSupabase();
@@ -1106,7 +1112,7 @@ export default function StudioPage() {
       } = await supabase.auth.getSession();
       const accessToken = session?.access_token;
       if (!accessToken) {
-        setPrivateRequests([]);
+        setPrivateRequests((previous) => (previous.length ? [] : previous));
         return;
       }
 
@@ -1142,6 +1148,8 @@ export default function StudioPage() {
       setPrivateRequestsFeedback(null);
     } catch {
       setPrivateRequestsFeedback("Özel oda talepleri alınamadı.");
+    } finally {
+      privateRequestsFetchInFlightRef.current = false;
     }
   }
 
@@ -1333,6 +1341,10 @@ export default function StudioPage() {
   }
 
   const handleDecidePrivateRequest = useCallback(async (requestId: string, decision: "accepted" | "rejected") => {
+    if (activePrivateSession?.sessionId) {
+      setPrivateRequestsFeedback("Özel görüşmedeyken yeni özel oda talebi işlenemez.");
+      return;
+    }
     setPrivateRequestsFeedback(null);
     setPrivateRequestDecidingId(requestId);
     try {
@@ -1377,7 +1389,7 @@ export default function StudioPage() {
     } finally {
       setPrivateRequestDecidingId(null);
     }
-  }, [displayName, chatIdentity.displayName]);
+  }, [activePrivateSession?.sessionId, displayName, chatIdentity.displayName]);
 
   useEffect(() => {
     if (activeTab !== "gift" || hasGiftCatalogLoaded) {
@@ -1620,6 +1632,14 @@ export default function StudioPage() {
                 ) : null}
                 {isLive ? (
                   <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">CANLI</span>
+                ) : null}
+                {activePrivateSession ? (
+                  <span
+                    data-testid="studio-private-busy-badge"
+                    className="rounded-full bg-violet-100 px-3 py-1 text-[11px] font-bold text-violet-700"
+                  >
+                    Özel görüşmedesin
+                  </span>
                 ) : null}
               </div>
 

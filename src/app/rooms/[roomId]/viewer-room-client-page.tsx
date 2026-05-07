@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchRoomPresenceFromApi,
@@ -72,6 +72,7 @@ type PrivateRequestApiResponse = {
   ok?: boolean;
   code?: string;
   message?: string;
+  minimumRequiredMinutes?: number;
 };
 
 type PrivateRoomRequestRealtimeRow = {
@@ -104,6 +105,7 @@ type PrivateSessionSummary = {
   startedAt: string;
   viewerBalanceMinutes?: number;
   elapsedSeconds?: number;
+  pricePerMinute?: number;
   estimatedChargedMinutes?: number;
   estimatedRemainingMinutes?: number;
   isLowBalance?: boolean;
@@ -249,6 +251,7 @@ function RoomInfoState({
 
 export default function ViewerRoomClientPage() {
   const params = useParams<{ roomId?: string }>();
+  const router = useRouter();
   const roomId = useMemo(() => {
     const raw = params?.roomId;
     if (Array.isArray(raw)) {
@@ -288,6 +291,8 @@ export default function ViewerRoomClientPage() {
   const [privateRequestFeedback, setPrivateRequestFeedback] = useState<string | null>(null);
   const [isPrivateRequestPending, setIsPrivateRequestPending] = useState(false);
   const [showInsufficientMinutesModal, setShowInsufficientMinutesModal] = useState(false);
+  const [minimumRequiredMinutes, setMinimumRequiredMinutes] = useState(1);
+  const [privateRoomPricePerMinute, setPrivateRoomPricePerMinute] = useState(1);
   const [showDmOverlay, setShowDmOverlay] = useState(false);
   const [activePrivateSession, setActivePrivateSession] = useState<PrivateSessionSummary | null>(null);
   const [privateSessionResult, setPrivateSessionResult] = useState<string | null>(null);
@@ -296,6 +301,7 @@ export default function ViewerRoomClientPage() {
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
   const [roomActivePrivateViewerId, setRoomActivePrivateViewerId] = useState<string | null>(null);
+  const [roomPrivateBusyRedirecting, setRoomPrivateBusyRedirecting] = useState(false);
   const privateRoomSignaling = usePrivateRoomSignaling({
     sessionId: activePrivateSession?.sessionId ?? "",
     enabled: Boolean(activePrivateSession?.sessionId),
@@ -331,6 +337,32 @@ export default function ViewerRoomClientPage() {
     !state.isLoggedIn || !isLive || isViewerBanned || isRoomBanned || isRoomKicked || Boolean(pendingGiftId) || isRoomPrivateBusy;
   const isPrivateRequestDisabled = !isLive || isViewerBanned || isRoomBanned || isRoomKicked || isPrivateRequestPending || isRoomPrivateBusy;
   const hasActivePrivateSession = Boolean(activePrivateSession?.sessionId);
+  const loadPrivateRoomPricing = useCallback(async () => {
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await fetch("/api/private-room/pricing", {
+        method: "GET",
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined,
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        pricing?: { pricePerMinute?: number };
+      };
+      if (!response.ok || !payload.ok) {
+        return;
+      }
+      const nextPrice = Math.max(1, Math.floor(payload.pricing?.pricePerMinute ?? 1));
+      setPrivateRoomPricePerMinute(nextPrice);
+      setMinimumRequiredMinutes(nextPrice);
+    } catch {
+      // keep defaults
+    }
+  }, []);
+
 
   function getGiftMinuteCost(gift: GiftCatalogItem) {
     return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
@@ -1002,6 +1034,10 @@ export default function ViewerRoomClientPage() {
   }, [state.isLoggedIn, state.userId]);
 
   useEffect(() => {
+    void loadPrivateRoomPricing();
+  }, [loadPrivateRoomPricing]);
+
+  useEffect(() => {
     void refreshRoomPrivateSession();
   }, [refreshRoomPrivateSession]);
 
@@ -1081,6 +1117,20 @@ export default function ViewerRoomClientPage() {
       void supabase.removeChannel(channel);
     };
   }, [isLive, refreshRoomPrivateSession, roomId]);
+
+  useEffect(() => {
+    if (!isRoomPrivateBusy) {
+      setRoomPrivateBusyRedirecting(false);
+      return;
+    }
+    setRoomPrivateBusyRedirecting(true);
+    const timer = setTimeout(() => {
+      router.push("/member");
+    }, 1700);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [isRoomPrivateBusy, router]);
 
   useEffect(() => {
     if (!roomId || !isLive || !state.isLoggedIn || !state.userId || isRoomBanned || isRoomKicked) {
@@ -1228,6 +1278,7 @@ export default function ViewerRoomClientPage() {
           return;
         }
         if (payload.code === "INSUFFICIENT_MINUTES") {
+          setMinimumRequiredMinutes(Math.max(1, Math.floor(payload.minimumRequiredMinutes ?? privateRoomPricePerMinute)));
           setShowInsufficientMinutesModal(true);
           return;
         }
@@ -1705,6 +1756,9 @@ export default function ViewerRoomClientPage() {
               {isPrivateRequestPending ? "GONDERILIYOR..." : "OZEL ODA DAVETI"}
             </button>
           </div>
+          <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-room-price-label">
+            Özel oda ücreti: {privateRoomPricePerMinute} dk / dakika
+          </p>
           {privateRequestFeedback ? (
             /talebiniz kabul edildi|talebiniz reddedildi/i.test(privateRequestFeedback) ? (
               <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-request-status-message">
@@ -1718,12 +1772,17 @@ export default function ViewerRoomClientPage() {
           ) : null}
           {isRoomPrivateBusy ? (
             <p className="mt-2 text-xs font-semibold text-amber-700" data-testid="room-private-busy-notice">
-              Yayıncı şu anda özel görüşmede.
+              Yayıncı özel görüşmeye geçti.
             </p>
           ) : null}
           {isRoomPrivateBusy ? (
             <p className="mt-1 text-xs text-zinc-600">
-              Bu sırada sohbet, hediye gönderimi ve özel oda daveti geçici olarak kapalıdır.
+              Bu sırada sohbet, hediye gönderimi ve özel oda daveti geçici olarak kapalıdır. Anasayfaya yönlendiriliyorsunuz.
+            </p>
+          ) : null}
+          {roomPrivateBusyRedirecting ? (
+            <p className="mt-1 text-xs text-zinc-600" data-testid="room-private-busy-redirecting">
+              Anasayfaya yönlendiriliyorsunuz.
             </p>
           ) : null}
           {!activePrivateSession && privateSessionResult ? (
@@ -2103,7 +2162,7 @@ export default function ViewerRoomClientPage() {
           <section className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" data-testid="insufficient-minutes-modal">
             <h2 className="text-lg font-black text-zinc-900">Süreniz yeterli değil!</h2>
             <p className="mt-2 text-sm text-zinc-600">
-              Özel odaya geçmek için süreniz yeterli değil. Dakika satın alıp tekrar deneyiniz.
+              Özel odaya geçmek için en az {minimumRequiredMinutes} dk bakiyen olmalı.
             </p>
             <div className="mt-4 flex gap-2">
               <button

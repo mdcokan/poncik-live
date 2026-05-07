@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { DEFAULT_PRIVATE_ROOM_PRICING } from "@/lib/private-room-pricing";
 
 type ApiError = {
   status: number;
@@ -33,6 +34,10 @@ type ProfileRow = {
   display_name: string | null;
 };
 
+type PricingRow = {
+  price_per_minute: number;
+};
+
 const CREATE_ERROR_BY_CODE: Record<string, ApiError> = {
   AUTH_REQUIRED: { status: 401, code: "AUTH_REQUIRED", message: "Giriş yapmalısın." },
   BANNED: { status: 403, code: "BANNED", message: "Hesabınız kısıtlanmıştır." },
@@ -46,7 +51,7 @@ const CREATE_ERROR_BY_CODE: Record<string, ApiError> = {
   INSUFFICIENT_MINUTES: {
     status: 402,
     code: "INSUFFICIENT_MINUTES",
-    message: "Süreniz yeterli değil. Özel odaya geçmek için dakika satın almalısınız.",
+    message: "Süreniz yeterli değil.",
   },
   PENDING_REQUEST_EXISTS: {
     status: 409,
@@ -153,6 +158,13 @@ export async function POST(request: Request) {
     return noStoreJson({ ok: false, code: "UNKNOWN_ERROR", message: "Özel oda talebi gönderilemedi." }, { status: 500 });
   }
 
+  const { data: pricingRows } = await supabase.rpc("get_private_room_pricing");
+  const pricing = Array.isArray(pricingRows) ? (pricingRows[0] as PricingRow | undefined) : undefined;
+  const minimumRequiredMinutes = Math.max(
+    1,
+    Math.floor(pricing?.price_per_minute ?? DEFAULT_PRIVATE_ROOM_PRICING.pricePerMinute),
+  );
+
   const { data, error } = await supabase.rpc("create_private_room_request", {
     p_room_id: roomId,
     p_viewer_note: viewerNote,
@@ -165,7 +177,11 @@ export async function POST(request: Request) {
       {
         ok: false,
         code: known?.code ?? "UNKNOWN_ERROR",
-        message: known?.message ?? "Özel oda talebi gönderilemedi.",
+        message:
+          known?.code === "INSUFFICIENT_MINUTES"
+            ? `Özel odaya geçmek için en az ${minimumRequiredMinutes} dk bakiyen olmalı.`
+            : (known?.message ?? "Özel oda talebi gönderilemedi."),
+        minimumRequiredMinutes: known?.code === "INSUFFICIENT_MINUTES" ? minimumRequiredMinutes : undefined,
       },
       { status: known?.status ?? 500 },
     );

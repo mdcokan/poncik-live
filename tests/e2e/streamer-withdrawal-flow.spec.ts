@@ -108,9 +108,12 @@ test("streamer withdrawal request flow works end-to-end", async ({ browser, requ
       await memberPage.goto(`/rooms/${roomId}`);
       await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
       await memberPage.getByTestId("private-room-request-button").click();
-      await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
-      await expect(streamerPage.getByTestId("accept-private-request-button").first()).toBeVisible({ timeout: 25_000 });
-      await streamerPage.getByTestId("accept-private-request-button").first().click();
+      await expect(memberPage.getByTestId("private-request-feedback")).toContainText(
+        /g[oö]nderildi|bekleniyor|onay[ıi] bekleniyor|davet/i,
+        { timeout: 20_000 },
+      );
+      await expect(streamerPage.getByTestId("studio-private-request-accept-button").first()).toBeVisible({ timeout: 25_000 });
+      await streamerPage.getByTestId("studio-private-request-accept-button").first().click();
       await expect(streamerPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
       await expect(memberPage.getByTestId("private-session-panel")).toBeVisible({ timeout: 30_000 });
       sessionStarted = true;

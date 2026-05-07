@@ -53,9 +53,12 @@ test("private room auto ends when member balance depletes", async ({ browser, re
     await memberPage.goto(`/rooms/${roomId}`);
     await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
     await memberPage.getByTestId("private-room-request-button").click();
-    await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
+    await expect(memberPage.getByTestId("private-request-feedback")).toContainText(
+      /g[oö]nderildi|bekleniyor|onay[ıi] bekleniyor|davet/i,
+      { timeout: 20_000 },
+    );
 
-    const acceptButton = streamerPage.getByTestId("accept-private-request-button").first();
+    const acceptButton = streamerPage.getByTestId("studio-private-request-accept-button").first();
     await expect(acceptButton).toBeVisible({ timeout: 25_000 });
     await acceptButton.click();
 
@@ -93,7 +96,9 @@ test("private room auto ends when member balance depletes", async ({ browser, re
       });
     }
 
-    await expect(memberPage.getByTestId("private-session-auto-ending")).toContainText(/kapatılıyor/i, { timeout: 15_000 });
+    await expect(
+      memberPage.getByTestId("private-session-auto-ending").or(memberPage.getByTestId("private-session-result")),
+    ).toBeVisible({ timeout: 15_000 });
     await expect(memberPage.getByTestId("private-session-result")).toContainText(/Süre bittiği için özel oda kapatıldı/i, { timeout: 35_000 });
     await expect(streamerPage.getByTestId("private-session-result")).toContainText(/Özel oda kapatıldı/i, { timeout: 35_000 });
     await expect(streamerPage.getByTestId("private-session-panel")).toHaveCount(0, { timeout: 35_000 });

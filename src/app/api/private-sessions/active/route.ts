@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { DEFAULT_PRIVATE_ROOM_PRICING } from "@/lib/private-room-pricing";
 
 type SessionRow = {
   id: string;
@@ -22,6 +23,10 @@ type ProfileRow = {
 
 type WalletRow = {
   balance: number | null;
+};
+
+type PricingRow = {
+  price_per_minute: number;
 };
 
 export const dynamic = "force-dynamic";
@@ -115,8 +120,12 @@ export async function GET(request: Request) {
     profileList.find((row) => row.id === data.streamer_id)?.display_name?.trim() || "Yayıncı";
   const viewerName = profileList.find((row) => row.id === data.viewer_id)?.display_name?.trim() || "Üye";
   const viewerBalanceMinutes = Math.max(0, Math.floor(viewerWallet?.balance ?? 0));
+  const { data: pricingRows } = await supabase.rpc("get_private_room_pricing");
+  const pricing = Array.isArray(pricingRows) ? (pricingRows[0] as PricingRow | undefined) : undefined;
+  const pricePerMinute = Math.max(1, Math.floor(pricing?.price_per_minute ?? DEFAULT_PRIVATE_ROOM_PRICING.pricePerMinute));
   const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(data.started_at).getTime()) / 1000));
-  const estimatedChargedMinutes = Math.max(1, Math.ceil(elapsedSeconds / 60));
+  const durationMinutes = Math.max(1, Math.ceil(elapsedSeconds / 60));
+  const estimatedChargedMinutes = durationMinutes * pricePerMinute;
   const estimatedRemainingMinutes = Math.max(0, viewerBalanceMinutes - estimatedChargedMinutes);
   const isLowBalance = estimatedRemainingMinutes <= 2;
 
@@ -134,6 +143,7 @@ export async function GET(request: Request) {
       startedAt: data.started_at,
       viewerBalanceMinutes,
       elapsedSeconds,
+      pricePerMinute,
       estimatedChargedMinutes,
       estimatedRemainingMinutes,
       isLowBalance,

@@ -66,7 +66,7 @@ test("private room ready state syncs in realtime", async ({ browser, request }, 
     await memberPage.getByTestId("private-room-request-button").click();
     await expect(memberPage.getByTestId("private-request-feedback")).toContainText(/iletildi|bekleyen/i, { timeout: 20_000 });
 
-    const acceptButton = streamerPage.getByTestId("accept-private-request-button").first();
+    const acceptButton = streamerPage.getByTestId("studio-private-request-accept-button").first();
     await expect(acceptButton).toBeVisible({ timeout: 25_000 });
     await acceptButton.click();
 

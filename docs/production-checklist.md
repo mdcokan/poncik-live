@@ -95,6 +95,11 @@ Fixture emails/passwords are duplicated across spec files; `tests/e2e/helpers/no
 6. `private-room-signaling`
 7. `admin-private-room-reports`
 
+## Private room pricing
+
+- Özel oda dakika fiyatı ve yayıncı payı `Admin > Sistem Ayarları > Özel Oda Ayarları` üzerinden yönetilir.
+- Bu ayar `platform_settings.private_room_pricing` içinde tutulur ve özel oda ücretlendirmesi genel oda dakikasından bağımsızdır.
+
 ## Known limitations
 
 - Without TURN, WebRTC may fail on strict NATs / symmetric NAT (STUN-only).

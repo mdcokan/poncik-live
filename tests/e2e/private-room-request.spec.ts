@@ -205,6 +205,7 @@ test("private room request flow handles minute checks and acceptance", async ({ 
     await roomLink.click();
     await expect(memberPage).toHaveURL(new RegExp(`/rooms/${roomId}$`), { timeout: 20_000 });
     await expect(memberPage.getByText(/^CANLI$/i).first()).toBeVisible({ timeout: 20_000 });
+    await expect(memberPage.getByTestId("private-room-price-label")).toBeVisible({ timeout: 20_000 });
 
     const inviteButton = memberPage.getByTestId("private-room-request-button");
     await expect(inviteButton, "private room request button").toBeEnabled({ timeout: 20_000 });

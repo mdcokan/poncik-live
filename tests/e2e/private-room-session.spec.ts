@@ -98,6 +98,7 @@ test("private room session starts and charges member minutes", async ({ browser,
 
     await memberPage.locator(`a[href="/rooms/${roomId}"]`).first().click();
     await expect(memberPage).toHaveURL(new RegExp(`/rooms/${roomId}$`), { timeout: 20_000 });
+    await expect(memberPage.getByTestId("private-room-price-label")).toBeVisible({ timeout: 20_000 });
     await waitForFixtureMemberNoActivePrivateSession(request, memberPage, 25_000);
     const privateRequestButton = memberPage.getByTestId("private-room-request-button");
     await expect(privateRequestButton).toBeEnabled({
