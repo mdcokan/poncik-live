@@ -69,6 +69,10 @@ function resolveStreamerName(room: Pick<RoomRow, "title">, profile: Pick<Profile
   return profileName || roomTitle || "Yayinci";
 }
 
+function isLikelyValidRoomId(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export async function fetchLiveRooms(limit = 24): Promise<LiveRoomsResult> {
   try {
     const supabase = getSupabaseClient();
@@ -85,7 +89,9 @@ export async function fetchLiveRooms(limit = 24): Promise<LiveRoomsResult> {
       return { rooms: [], hasError: Boolean(roomsError) };
     }
 
-    const liveRoomsOnly = roomsData.filter((room) => room.status === "live");
+    const liveRoomsOnly = roomsData.filter(
+      (room) => room.status === "live" && Boolean(room.id) && Boolean(room.owner_id) && isLikelyValidRoomId(room.id),
+    );
     if (!liveRoomsOnly.length) {
       return { rooms: [], hasError: false };
     }
@@ -100,24 +106,41 @@ export async function fetchLiveRooms(limit = 24): Promise<LiveRoomsResult> {
       (profilesData ?? []).map((profile) => [profile.id, profile]),
     );
 
-    const rooms: LiveRoom[] = liveRoomsOnly.map((room) => {
-      const profile = profilesById.get(room.owner_id);
+    const candidateRooms: LiveRoom[] = liveRoomsOnly
+      .map((room) => {
+        const profile = profilesById.get(room.owner_id);
 
-      return {
-        id: room.id,
-        title: room.title,
-        status: room.status,
-        ownerId: room.owner_id,
-        updatedAt: room.updated_at,
-        createdAt: room.created_at,
-        liveStartedAt: room.live_started_at ?? null,
-        streamerName: resolveStreamerName(room, profile),
-        streamerRole: profile?.role ?? null,
-      };
-    });
+        return {
+          id: room.id,
+          title: room.title,
+          status: room.status,
+          ownerId: room.owner_id,
+          updatedAt: room.updated_at,
+          createdAt: room.created_at,
+          liveStartedAt: room.live_started_at ?? null,
+          streamerName: resolveStreamerName(room, profile ?? undefined),
+          streamerRole: profile?.role ?? null,
+        } satisfies LiveRoom;
+      })
+      .filter((room): room is LiveRoom => Boolean(room));
+
+    const verifiedRooms: LiveRoom[] = [];
+    for (const room of candidateRooms) {
+      const roomState = await fetchPublicRoomState(room.id);
+      if (!roomState) {
+        continue;
+      }
+      if (roomState.status !== "live" || roomState.ownerId !== room.ownerId) {
+        continue;
+      }
+      verifiedRooms.push({
+        ...room,
+        streamerName: roomState.streamerName || room.streamerName,
+      });
+    }
 
     return {
-      rooms,
+      rooms: verifiedRooms,
       hasError: Boolean(profilesError),
     };
   } catch {

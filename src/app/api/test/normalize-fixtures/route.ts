@@ -9,6 +9,10 @@ type FixtureIdentity = {
   email: FixtureEmail;
 };
 
+function isInvalidRoomStatusEnumError(message?: string) {
+  return (message ?? "").includes("invalid input value for enum room_status");
+}
+
 const ADMIN_EMAIL: FixtureEmail = "admin@test.com";
 const STREAMER_EMAIL: FixtureEmail = "eda@test.com";
 const VIEWER_EMAIL: FixtureEmail = "veli@test.com";
@@ -158,6 +162,13 @@ export async function POST(request: Request) {
       throw new Error(`Failed to set viewer display_name: ${viewerDisplayNameError.message}`);
     }
 
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const fixtureMaintenanceClient = serviceRoleKey
+      ? createClient(supabaseUrl, serviceRoleKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        })
+      : null;
+
     let liveRoomsClosedForEda = 0;
     const { data: liveOwnedRooms, error: liveRoomsListError } = await adminClient
       .from("rooms")
@@ -167,7 +178,29 @@ export async function POST(request: Request) {
     if (liveRoomsListError) {
       throw new Error(`Failed to list live rooms for fixture streamer: ${liveRoomsListError.message}`);
     }
-    for (const row of liveOwnedRooms ?? []) {
+    let busyOwnedRooms: { id: string }[] = [];
+    const { data: privateBusyRows, error: privateBusyError } = await adminClient
+      .from("rooms")
+      .select("id")
+      .eq("owner_id", fixtureUsers[STREAMER_EMAIL].id)
+      .eq("status", "private_busy");
+    if (privateBusyError && isInvalidRoomStatusEnumError(privateBusyError.message)) {
+      const { data: legacyPrivateRows, error: legacyPrivateError } = await adminClient
+        .from("rooms")
+        .select("id")
+        .eq("owner_id", fixtureUsers[STREAMER_EMAIL].id)
+        .eq("status", "private");
+      if (legacyPrivateError) {
+        throw new Error(`Failed to list private rooms for fixture streamer: ${legacyPrivateError.message}`);
+      }
+      busyOwnedRooms = legacyPrivateRows ?? [];
+    } else if (privateBusyError) {
+      throw new Error(`Failed to list private_busy rooms for fixture streamer: ${privateBusyError.message}`);
+    } else {
+      busyOwnedRooms = privateBusyRows ?? [];
+    }
+
+    for (const row of [...(liveOwnedRooms ?? []), ...busyOwnedRooms]) {
       const { error: closeLiveError } = await adminClient.rpc("admin_close_live_room", {
         p_room_id: row.id,
         p_reason: "e2e fixture normalize",
@@ -179,6 +212,66 @@ export async function POST(request: Request) {
       const msg = closeLiveError.message ?? "";
       if (msg.includes("ROOM_NOT_LIVE") || msg.includes("ROOM_NOT_FOUND")) {
         continue;
+      }
+      if (fixtureMaintenanceClient) {
+        const nowIso = new Date().toISOString();
+        let { data: forcedClosedRows, error: forceCloseError } = await fixtureMaintenanceClient
+          .from("rooms")
+          .update({
+            status: "offline",
+            updated_at: nowIso,
+          })
+          .eq("id", row.id)
+          .eq("owner_id", fixtureUsers[STREAMER_EMAIL].id)
+          .eq("status", "live")
+          .select("id");
+        if ((!forcedClosedRows || forcedClosedRows.length === 0) && !forceCloseError) {
+          const privateBusyClose = await fixtureMaintenanceClient
+            .from("rooms")
+            .update({
+              status: "offline",
+              updated_at: nowIso,
+            })
+            .eq("id", row.id)
+            .eq("owner_id", fixtureUsers[STREAMER_EMAIL].id)
+            .eq("status", "private_busy")
+            .select("id");
+          if (privateBusyClose.error && isInvalidRoomStatusEnumError(privateBusyClose.error.message)) {
+            const legacyPrivateClose = await fixtureMaintenanceClient
+              .from("rooms")
+              .update({
+                status: "offline",
+                updated_at: nowIso,
+              })
+              .eq("id", row.id)
+              .eq("owner_id", fixtureUsers[STREAMER_EMAIL].id)
+              .eq("status", "private")
+              .select("id");
+            forcedClosedRows = legacyPrivateClose.data;
+            forceCloseError = legacyPrivateClose.error;
+            if (legacyPrivateClose.error) {
+              throw new Error(
+                `admin_close_live_room failed during fixture normalize and fallback close failed: ${closeLiveError.message} / ${legacyPrivateClose.error.message}`,
+              );
+            }
+          } else if (privateBusyClose.error) {
+            throw new Error(
+              `admin_close_live_room failed during fixture normalize and fallback close failed: ${closeLiveError.message} / ${privateBusyClose.error.message}`,
+            );
+          } else {
+            forcedClosedRows = privateBusyClose.data;
+            forceCloseError = privateBusyClose.error;
+          }
+        }
+        if (forceCloseError) {
+          throw new Error(
+            `admin_close_live_room failed during fixture normalize and fallback close failed: ${closeLiveError.message} / ${forceCloseError.message}`,
+          );
+        }
+        if (forcedClosedRows && forcedClosedRows.length > 0) {
+          liveRoomsClosedForEda += 1;
+          continue;
+        }
       }
       throw new Error(`admin_close_live_room failed during fixture normalize: ${closeLiveError.message}`);
     }
@@ -207,13 +300,6 @@ export async function POST(request: Request) {
       }
       pendingRequestsCancelled += 1;
     }
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const fixtureMaintenanceClient = serviceRoleKey
-      ? createClient(supabaseUrl, serviceRoleKey, {
-          auth: { persistSession: false, autoRefreshToken: false },
-        })
-      : null;
 
     const { data: activePrivateSessions, error: activePrivateSessionsError } = await adminClient
       .from("private_room_sessions")

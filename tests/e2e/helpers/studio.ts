@@ -79,12 +79,36 @@ async function waitForStartButtonEnabled(
 ): Promise<void> {
   await expect(startButton).toBeVisible({ timeout: 20_000 });
 
+  let staleRecoveryTriggered = false;
+  const staleRecoveryThresholdMs = 15_000;
+  const pollingStartedAt = Date.now();
+
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await assertNoStudioRestrictions(page, "ensureStreamerLive (polling)");
 
     if (await startButton.isEnabled().catch(() => false)) {
       return;
+    }
+
+    if (!staleRecoveryTriggered && Date.now() - pollingStartedAt >= staleRecoveryThresholdMs) {
+      staleRecoveryTriggered = true;
+      const accessToken = await extractSupabaseAccessToken(page);
+      if (accessToken) {
+        await request.post("/api/studio/live/end", {
+          failOnStatusCode: false,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          data: {
+            roomId: null,
+            reason: "e2e_disabled_start_recovery",
+          },
+        });
+      }
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(startButton).toBeVisible({ timeout: 20_000 });
     }
 
     await page.waitForTimeout(1000);

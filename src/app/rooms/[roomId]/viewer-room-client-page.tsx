@@ -166,6 +166,16 @@ type PublicRoomStateResponse = {
   liveStartedAt?: string | null;
 };
 
+type RoomActivePrivateSessionResponse = {
+  ok?: boolean;
+  active?: boolean;
+  sessionId?: string | null;
+  status?: "active" | null;
+  isParticipant?: boolean;
+  isViewer?: boolean;
+  isStreamer?: boolean;
+};
+
 type RoomModerationRow = {
   id: string;
 };
@@ -300,7 +310,15 @@ export default function ViewerRoomClientPage() {
   const [privateSessionError, setPrivateSessionError] = useState<string | null>(null);
   const [isPrivateSessionStarting, setIsPrivateSessionStarting] = useState(false);
   const [isPrivateSessionEnding, setIsPrivateSessionEnding] = useState(false);
-  const [roomActivePrivateViewerId, setRoomActivePrivateViewerId] = useState<string | null>(null);
+  const [roomActivePrivateSession, setRoomActivePrivateSession] = useState<{
+    active: boolean;
+    sessionId: string | null;
+    status: "active" | null;
+    isParticipant: boolean;
+    isViewer: boolean;
+    isStreamer: boolean;
+  } | null>(null);
+  const [roomPrivateBusyNoticeVisible, setRoomPrivateBusyNoticeVisible] = useState(false);
   const [roomPrivateBusyRedirecting, setRoomPrivateBusyRedirecting] = useState(false);
   const privateRoomSignaling = usePrivateRoomSignaling({
     sessionId: activePrivateSession?.sessionId ?? "",
@@ -324,19 +342,23 @@ export default function ViewerRoomClientPage() {
   const prevGiftEventCountRef = useRef(0);
   const shouldAutoScrollChatRef = useRef(true);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const roomPrivateSessionRefreshInFlightRef = useRef(false);
 
   const isLive = state.room?.status === "live";
+  const isRoomOpenForViewer = state.room?.status === "live" || state.room?.status === "private_busy";
   const viewerLiveStartedAt = state.room?.liveStartedAt ?? null;
+  const isCurrentUserRoomPrivateParticipant = Boolean(roomActivePrivateSession?.isParticipant);
   const isRoomPrivateBusy =
-    Boolean(roomActivePrivateViewerId) &&
-    roomActivePrivateViewerId !== state.userId &&
-    activePrivateSession?.viewerId !== state.userId;
+    Boolean(roomActivePrivateSession?.active) &&
+    !isCurrentUserRoomPrivateParticipant &&
+    activePrivateSession?.sessionId !== roomActivePrivateSession?.sessionId;
+  const hasActivePrivateSession = Boolean(activePrivateSession?.sessionId);
   const isChatInputDisabled =
     !state.isLoggedIn || !isLive || isSending || isRoomMuted || isRoomBanned || isRoomKicked || isRoomPrivateBusy;
   const isGiftSendDisabled =
     !state.isLoggedIn || !isLive || isViewerBanned || isRoomBanned || isRoomKicked || Boolean(pendingGiftId) || isRoomPrivateBusy;
-  const isPrivateRequestDisabled = !isLive || isViewerBanned || isRoomBanned || isRoomKicked || isPrivateRequestPending || isRoomPrivateBusy;
-  const hasActivePrivateSession = Boolean(activePrivateSession?.sessionId);
+  const isPrivateRequestDisabled =
+    !isLive || isViewerBanned || isRoomBanned || isRoomKicked || isPrivateRequestPending || isRoomPrivateBusy || hasActivePrivateSession;
   const loadPrivateRoomPricing = useCallback(async () => {
     try {
       const supabase = getSupabaseBrowserClient();
@@ -480,25 +502,74 @@ export default function ViewerRoomClientPage() {
   }, [isLive, roomId]);
 
   const refreshRoomPrivateSession = useCallback(async () => {
-    if (!roomId || !isLive) {
-      setRoomActivePrivateViewerId(null);
+    if (!roomId) {
+      setRoomActivePrivateSession(null);
       return;
     }
+    if (roomPrivateSessionRefreshInFlightRef.current) {
+      return;
+    }
+    roomPrivateSessionRefreshInFlightRef.current = true;
     try {
       const supabase = getSupabaseBrowserClient();
-      const { data } = await supabase
-        .from("private_room_sessions")
-        .select("id, viewer_id, status")
-        .eq("room_id", roomId)
-        .eq("status", "active")
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle<{ id: string; viewer_id: string | null; status: string }>();
-      setRoomActivePrivateViewerId(data?.viewer_id ?? null);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setRoomActivePrivateSession(null);
+        return;
+      }
+      const response = await fetch(`/api/rooms/${roomId}/private-session-state`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as RoomActivePrivateSessionResponse;
+      const isExplicitlyInactive = response.ok && payload.ok && !payload.active;
+      const nextState =
+        response.ok && payload.ok
+          ? {
+              active: Boolean(payload.active),
+              sessionId: payload.sessionId ?? null,
+              status: payload.status === "active" ? ("active" as const) : null,
+              isParticipant: Boolean(payload.isParticipant),
+              isViewer: Boolean(payload.isViewer),
+              isStreamer: Boolean(payload.isStreamer),
+            }
+          : null;
+      setRoomActivePrivateSession((previous) => {
+        if (!nextState) {
+          return previous ? null : previous;
+        }
+        if (
+          previous &&
+          previous.active === nextState.active &&
+          previous.sessionId === nextState.sessionId &&
+          previous.status === nextState.status &&
+          previous.isParticipant === nextState.isParticipant &&
+          previous.isViewer === nextState.isViewer &&
+          previous.isStreamer === nextState.isStreamer
+        ) {
+          return previous;
+        }
+        return nextState;
+      });
+      if (isExplicitlyInactive) {
+        setRoomPrivateBusyNoticeVisible(false);
+        setRoomPrivateBusyRedirecting(false);
+        if (activePrivateSession?.sessionId) {
+          setActivePrivateSession(null);
+          setPrivateSessionCloseSummary(null);
+          setPrivateSessionError(null);
+          setPrivateSessionResult((previous) => previous ?? "Yayıncı özel görüşmeden ayrıldı.");
+        }
+      }
     } catch {
-      setRoomActivePrivateViewerId(null);
+      // keep previous value on transient errors
+    } finally {
+      roomPrivateSessionRefreshInFlightRef.current = false;
     }
-  }, [isLive, roomId]);
+  }, [activePrivateSession?.sessionId, roomId]);
 
   const fetchRoomStateFromApi = useCallback(
     async (targetRoomId: string): Promise<PublicRoomStateResponse | null> => {
@@ -596,7 +667,7 @@ export default function ViewerRoomClientPage() {
       if (!prev.room) {
         return prev;
       }
-      if (prev.room.status !== "live") {
+      if (prev.room.status !== "live" && prev.room.status !== "private_busy") {
         return prev;
       }
       return {
@@ -611,6 +682,12 @@ export default function ViewerRoomClientPage() {
     setMessages([]);
     setPresenceUsers([]);
     setGiftEvents([]);
+    setRoomActivePrivateSession(null);
+    setActivePrivateSession(null);
+    setPrivateSessionCloseSummary(null);
+    setPrivateSessionError(null);
+    setRoomPrivateBusyNoticeVisible(false);
+    setRoomPrivateBusyRedirecting(false);
     latestGiftEventIdRef.current = null;
   }, [roomId]);
 
@@ -1092,8 +1169,10 @@ export default function ViewerRoomClientPage() {
   }, [activePrivateSession?.sessionId, state.userId]);
 
   useEffect(() => {
-    if (!roomId || !isLive) {
-      setRoomActivePrivateViewerId(null);
+    if (!roomId || !isRoomOpenForViewer) {
+      setRoomActivePrivateSession(null);
+      setRoomPrivateBusyNoticeVisible(false);
+      setRoomPrivateBusyRedirecting(false);
       return;
     }
     const supabase = getSupabaseBrowserClient();
@@ -1107,7 +1186,39 @@ export default function ViewerRoomClientPage() {
           table: "private_room_sessions",
           filter: `room_id=eq.${roomId}`,
         },
-        () => {
+        (payload) => {
+          const row = (payload.new ?? payload.old ?? null) as PrivateRoomSessionRealtimeRow | null;
+          if (!row || row.room_id !== roomId) {
+            return;
+          }
+          if (payload.eventType === "DELETE" || row.status !== "active") {
+            setRoomActivePrivateSession(null);
+            return;
+          }
+          const isViewer = Boolean(state.userId) && row.viewer_id === state.userId;
+          const isStreamer = Boolean(state.userId) && state.room?.owner_id === state.userId;
+          setRoomActivePrivateSession((previous) => {
+            const nextState = {
+              active: true,
+              sessionId: row.id,
+              status: "active" as const,
+              isParticipant: isViewer || isStreamer,
+              isViewer,
+              isStreamer,
+            };
+            if (
+              previous &&
+              previous.active === nextState.active &&
+              previous.sessionId === nextState.sessionId &&
+              previous.status === nextState.status &&
+              previous.isParticipant === nextState.isParticipant &&
+              previous.isViewer === nextState.isViewer &&
+              previous.isStreamer === nextState.isStreamer
+            ) {
+              return previous;
+            }
+            return nextState;
+          });
           void refreshRoomPrivateSession();
         },
       )
@@ -1116,21 +1227,61 @@ export default function ViewerRoomClientPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [isLive, refreshRoomPrivateSession, roomId]);
+  }, [isRoomOpenForViewer, refreshRoomPrivateSession, roomId, state.room?.owner_id, state.userId]);
 
   useEffect(() => {
     if (!isRoomPrivateBusy) {
+      setRoomPrivateBusyNoticeVisible(false);
       setRoomPrivateBusyRedirecting(false);
       return;
     }
+    setRoomPrivateBusyNoticeVisible(true);
     setRoomPrivateBusyRedirecting(true);
     const timer = setTimeout(() => {
       router.push("/member");
-    }, 1700);
+    }, 2000);
     return () => {
       clearTimeout(timer);
     };
   }, [isRoomPrivateBusy, router]);
+
+  useEffect(() => {
+    if (!roomId || !isRoomOpenForViewer || !state.userId || isCurrentUserRoomPrivateParticipant) {
+      return;
+    }
+    let attempts = 0;
+    const maxAttempts = 5;
+    const tick = () => {
+      attempts += 1;
+      void refreshRoomPrivateSession();
+      if (attempts >= maxAttempts) {
+        clearInterval(intervalId);
+      }
+    };
+    const intervalId = setInterval(tick, 1000);
+    tick();
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [isCurrentUserRoomPrivateParticipant, isRoomOpenForViewer, refreshRoomPrivateSession, roomId, state.userId]);
+
+  useEffect(() => {
+    if (!roomId || !isRoomOpenForViewer) {
+      return;
+    }
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void refreshRoomPrivateSession();
+    };
+    window.addEventListener("focus", onVisibilityOrFocus);
+    document.addEventListener("visibilitychange", onVisibilityOrFocus);
+    return () => {
+      window.removeEventListener("focus", onVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+    };
+  }, [isRoomOpenForViewer, refreshRoomPrivateSession, roomId]);
 
   useEffect(() => {
     if (!roomId || !isLive || !state.isLoggedIn || !state.userId || isRoomBanned || isRoomKicked) {
@@ -1644,7 +1795,7 @@ export default function ViewerRoomClientPage() {
     );
   }
 
-  if (state.room.status !== "live") {
+  if (state.room.status !== "live" && state.room.status !== "private_busy") {
     return (
       <RoomInfoState
         title="Bu yayin su an kapali"
@@ -1722,7 +1873,6 @@ export default function ViewerRoomClientPage() {
               </div>
             </div>
           </div>
-
           <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
             <button className="rounded-2xl bg-yellow-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
               CANLI DESTEK
@@ -1770,17 +1920,17 @@ export default function ViewerRoomClientPage() {
               </p>
             )
           ) : null}
-          {isRoomPrivateBusy ? (
+          {roomPrivateBusyNoticeVisible ? (
             <p className="mt-2 text-xs font-semibold text-amber-700" data-testid="room-private-busy-notice">
               Yayıncı özel görüşmeye geçti.
             </p>
           ) : null}
-          {isRoomPrivateBusy ? (
+          {roomPrivateBusyNoticeVisible ? (
             <p className="mt-1 text-xs text-zinc-600">
               Bu sırada sohbet, hediye gönderimi ve özel oda daveti geçici olarak kapalıdır. Anasayfaya yönlendiriliyorsunuz.
             </p>
           ) : null}
-          {roomPrivateBusyRedirecting ? (
+          {roomPrivateBusyNoticeVisible && roomPrivateBusyRedirecting ? (
             <p className="mt-1 text-xs text-zinc-600" data-testid="room-private-busy-redirecting">
               Anasayfaya yönlendiriliyorsunuz.
             </p>
@@ -2115,8 +2265,8 @@ export default function ViewerRoomClientPage() {
       ) : null}
 
       {activePrivateSession ? (
-        <div className="fixed inset-x-3 bottom-3 top-20 z-40 md:inset-x-6 lg:inset-x-10 lg:top-24">
-          <section className="mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-violet-300 bg-white/95 shadow-2xl backdrop-blur">
+        <div className="pointer-events-none fixed inset-x-3 bottom-3 top-20 z-40 md:inset-x-6 lg:inset-x-10 lg:top-24">
+          <section className="pointer-events-auto mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-violet-300 bg-white/95 shadow-2xl backdrop-blur">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-100 px-3 py-2 sm:px-4">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-600">Özel görüşme modu</p>

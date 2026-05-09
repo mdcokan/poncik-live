@@ -712,11 +712,18 @@ export default function MemberPageClient({ initialRooms, initialHasError }: Memb
   }
 
   function renderLiveCard(room: LiveRoom) {
+    const hasValidRoomId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(room.id);
     return (
       <Link
         key={room.id}
         data-testid="member-live-card"
         href={`/rooms/${room.id}`}
+        onClick={(event) => {
+          if (!hasValidRoomId) {
+            event.preventDefault();
+          }
+        }}
+        aria-disabled={!hasValidRoomId}
         className={`flex min-h-[200px] flex-col rounded-2xl border border-cyan-100/80 bg-gradient-to-b from-cyan-50 to-white p-4 shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
           isBanned ? "pointer-events-none opacity-60" : "hover:border-indigo-200 hover:shadow-md"
         }`}

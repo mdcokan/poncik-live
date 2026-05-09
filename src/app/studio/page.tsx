@@ -22,7 +22,7 @@ import PrivateSessionEndedSummary, {
 import { DirectMessagesPanel } from "@/components/dm/DirectMessagesPanel";
 import { usePrivateRoomSignaling } from "@/hooks/use-private-room-signaling";
 
-type RoomStatus = "offline" | "live" | "private";
+type RoomStatus = "offline" | "live" | "private_busy" | "private";
 
 type StudioRoom = {
   id: string;
@@ -107,6 +107,15 @@ type EndSessionApiResponse = {
     streamerEarnedMinutes?: number;
     platformFeeMinutes?: number;
   };
+};
+
+type EndLiveApiResponse = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  closedRoomIds?: string[];
+  endedSessionIds?: string[];
+  presenceDeleted?: number;
 };
 
 type ReadyStateApiResponse = {
@@ -249,6 +258,52 @@ export default function StudioPage() {
   const privateRequestsFetchInFlightRef = useRef(false);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
 
+  const resetStudioLiveState = useCallback((endMessage: string) => {
+    setActiveRoom(null);
+    setActivePrivateSession(null);
+    setPrivateRequests([]);
+    setRoomMessages([]);
+    messageIdsRef.current = new Set();
+    setPresenceUsers([]);
+    setGiftEvents([]);
+    setPrivateSessionCloseSummary(null);
+    setPrivateSessionError(null);
+    setPrivateSessionResult(endMessage);
+    setChatBody("");
+    latestGiftEventIdRef.current = null;
+  }, []);
+
+  const callStudioLiveEnd = useCallback(
+    async (options?: { roomId?: string | null; reason?: string }) => {
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        throw new Error("AUTH_REQUIRED");
+      }
+      const response = await fetch("/api/studio/live/end", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          roomId: options?.roomId ?? null,
+          reason: options?.reason ?? "studio_cleanup",
+        }),
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as EndLiveApiResponse;
+      return {
+        response,
+        payload,
+      };
+    },
+    [],
+  );
+
   function getGiftMinuteCost(gift: GiftCatalogItem) {
     return gift.coinAmount ?? gift.amount ?? gift.price ?? 0;
   }
@@ -321,13 +376,57 @@ export default function StudioPage() {
         }
 
         if (rooms && rooms.length > 0) {
-          const liveRoom = rooms.find((room) => room.status === "live");
-          const lastRoom = liveRoom ?? rooms[0];
+          const broadcastRoom = rooms.find((room) => room.status === "live" || room.status === "private_busy");
+          if (!broadcastRoom) {
+            setActiveRoom(null);
+            return;
+          }
+
+          let roomLooksConsistent = false;
+          try {
+            const roomStateResponse = await fetch(`/api/rooms/${broadcastRoom.id}/state`, {
+              method: "GET",
+              cache: "no-store",
+            });
+            if (roomStateResponse.ok) {
+              const roomState = (await roomStateResponse.json().catch(() => null)) as
+                | { id?: string; ownerId?: string; status?: string }
+                | null;
+              roomLooksConsistent =
+                Boolean(roomState?.id) &&
+                roomState?.id === broadcastRoom.id &&
+                roomState?.ownerId === user.id &&
+                (roomState?.status === "live" || roomState?.status === "private_busy");
+            }
+          } catch {
+            roomLooksConsistent = false;
+          }
+
+          if (!roomLooksConsistent) {
+            try {
+              await callStudioLiveEnd({ roomId: broadcastRoom.id, reason: "studio_mount_stale_cleanup" });
+            } catch (cleanupError) {
+              console.error("[studio] stale room cleanup failed on mount", cleanupError);
+            }
+            setActiveRoom(null);
+            setActivePrivateSession(null);
+            setPrivateRequests([]);
+            setRoomMessages([]);
+            setPresenceUsers([]);
+            setGiftEvents([]);
+            setPrivateSessionCloseSummary(null);
+            setPrivateSessionError(null);
+            latestGiftEventIdRef.current = null;
+            setMessage("");
+            setStatus("idle");
+            return;
+          }
+
           setActiveRoom({
-            id: lastRoom.id,
-            title: lastRoom.title,
-            status: lastRoom.status as RoomStatus,
-            liveStartedAt: (lastRoom as { live_started_at?: string | null }).live_started_at ?? null,
+            id: broadcastRoom.id,
+            title: broadcastRoom.title,
+            status: broadcastRoom.status as RoomStatus,
+            liveStartedAt: (broadcastRoom as { live_started_at?: string | null }).live_started_at ?? null,
           });
         }
       } catch (error) {
@@ -339,7 +438,7 @@ export default function StudioPage() {
     }
 
     loadUser();
-  }, []);
+  }, [callStudioLiveEnd]);
 
   const isNearBottom = useCallback((element: HTMLDivElement) => {
     const distance = element.scrollHeight - (element.scrollTop + element.clientHeight);
@@ -614,6 +713,11 @@ export default function StudioPage() {
       setStatus("success");
       setMessage("Yayın aktif.");
       setShowLiveSettings(false);
+      setPrivateRequests([]);
+      setActivePrivateSession(null);
+      setPrivateSessionResult(null);
+      setPrivateSessionCloseSummary(null);
+      setPrivateSessionError(null);
     } catch {
       setStatus("error");
       setMessage("Yayın başlatılamadı. Lütfen tekrar deneyin.");
@@ -631,71 +735,64 @@ export default function StudioPage() {
     setMessage("");
 
     try {
-      const supabase = getSupabase();
-
-      const { data: liveRoom, error: liveRoomError } = await supabase
-        .from("rooms")
-        .select("id, title, status")
-        .eq("owner_id", ownerId)
-        .eq("status", "live")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (liveRoomError) {
-        throw liveRoomError;
-      }
-
-      const roomIdToClose = liveRoom?.id ?? activeRoom?.id;
-
-      if (!roomIdToClose) {
+      const { response, payload } = await callStudioLiveEnd({
+        roomId: activeRoom?.id ?? null,
+        reason: "streamer_stop_button",
+      });
+      if (!response.ok || !payload.ok) {
+        console.error("[studio] live end endpoint error", {
+          status: response.status,
+          payload,
+        });
         setStatus("error");
-        setMessage("Yayın kapatılamadı. Lütfen tekrar deneyin.");
+        setMessage(payload.message || "Yayın kapatılırken bir sorun oluştu.");
+        resetStudioLiveState("Yayın durumu temizlendi.");
         return;
       }
 
-      const { data: updatedRoom, error: closeRoomError } = await supabase
-        .from("rooms")
-        .update({
-          status: "offline",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", roomIdToClose)
-        .select("id, title, status")
-        .single();
-
-      if (closeRoomError || !updatedRoom) {
-        throw closeRoomError ?? new Error("Oda kapatılamadı.");
-      }
-
-      setActiveRoom(null);
-      setRoomMessages([]);
-      setPresenceUsers([]);
-      setGiftEvents([]);
-
-      try {
-        await supabase.channel(LIVE_ROOMS_BROADCAST_CHANNEL).send({
-          type: "broadcast",
-          event: LIVE_ROOMS_CHANGED_EVENT,
-          payload: {
-            action: "stopped",
-            roomId: roomIdToClose,
-            status: "offline",
-            at: Date.now(),
-          },
-        });
-      } catch {}
+      resetStudioLiveState("Yayın kapatıldı.");
 
       setStatus("success");
       setMessage("Yayın kapatıldı.");
-    } catch {
+    } catch (error) {
+      console.error("[studio] live end request failed", error);
+      resetStudioLiveState("Yayın durumu temizlendi.");
       setStatus("error");
       setMessage("Yayın kapatılamadı. Lütfen tekrar deneyin.");
     }
   }
 
+  const endLiveWithKeepalive = useCallback(async (reason: string) => {
+    if (!activeRoom?.id || (activeRoom.status !== "live" && activeRoom.status !== "private_busy")) {
+      return;
+    }
+    try {
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        return;
+      }
+      void fetch("/api/studio/live/end", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ roomId: activeRoom.id, reason }),
+        cache: "no-store",
+        keepalive: true,
+      });
+    } catch {
+      // best-effort cleanup for tab close / logout
+    }
+  }, [activeRoom?.id, activeRoom?.status]);
+
   async function handleSignOut() {
     try {
+      await endLiveWithKeepalive("streamer_sign_out");
       const supabase = getSupabase();
       await supabase.auth.signOut();
     } finally {
@@ -704,11 +801,27 @@ export default function StudioPage() {
   }
 
   const isLive = activeRoom?.status === "live";
+  const isBroadcastActive = activeRoom?.status === "live" || activeRoom?.status === "private_busy";
   const streamTitle = activeRoom?.title || displayName || "Yayıncı";
   const isBusy = loadingUser || status === "loading";
   const isStreamer = role === "streamer";
   const isRestricted = isBanned;
   const pendingPrivateRequest = privateRequests[0] ?? null;
+
+  useEffect(() => {
+    if (!activeRoom?.id || (activeRoom.status !== "live" && activeRoom.status !== "private_busy")) {
+      return;
+    }
+    const handlePageHide = () => {
+      void endLiveWithKeepalive("streamer_page_leave");
+    };
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
+    };
+  }, [activeRoom?.id, activeRoom?.status]);
 
   useEffect(() => {
     if (isLive) {
@@ -1630,7 +1743,7 @@ export default function StudioPage() {
                 {isRestricted ? (
                   <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">Hesap kısıtlı</span>
                 ) : null}
-                {isLive ? (
+                {isBroadcastActive ? (
                   <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">CANLI</span>
                 ) : null}
                 {activePrivateSession ? (
@@ -1702,11 +1815,11 @@ export default function StudioPage() {
                   </div>
                 </div>
               </div>
-
-              {isLive ? (
+              {isBroadcastActive ? (
                 <div className="my-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-rose-100 bg-white px-3 py-2 shadow-sm">
                   <button
                     type="button"
+                    data-testid="studio-stop-live-button"
                     onClick={handleStopLive}
                     disabled={isBusy || !isStreamer || isRestricted}
                     className="rounded-xl bg-rose-500 px-4 py-2 text-xs font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
@@ -2167,14 +2280,25 @@ export default function StudioPage() {
       </section>
 
       {activePrivateSession ? (
-        <div className="fixed inset-x-3 bottom-3 top-20 z-40 md:inset-x-6 lg:inset-x-10 lg:top-24">
-          <section className="mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-violet-300 bg-white/95 shadow-2xl backdrop-blur">
+        <div className="pointer-events-none fixed inset-x-3 bottom-3 top-20 z-40 md:inset-x-6 lg:inset-x-10 lg:top-24">
+          <section className="pointer-events-auto mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-violet-300 bg-white/95 shadow-2xl backdrop-blur">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-100 px-3 py-2 sm:px-4">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-600">Özel görüşme modu</p>
                 <h2 className="text-sm font-black text-zinc-900 sm:text-base">{activePrivateSession.viewerName} ile özel oda aktif</h2>
               </div>
-              <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">Bağlantı ve hazırlık paneli</span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">Bağlantı ve hazırlık paneli</span>
+                <button
+                  type="button"
+                  data-testid="studio-stop-live-private-button"
+                  onClick={handleStopLive}
+                  disabled={isBusy || !isStreamer || isRestricted}
+                  className="rounded-xl bg-rose-500 px-3 py-1.5 text-xs font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {status === "loading" ? "Yayın kapatılıyor..." : "YAYINI BİTİR"}
+                </button>
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-2 sm:p-3">
               <PrivateRoomSessionPanel
