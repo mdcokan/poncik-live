@@ -136,19 +136,6 @@ type EndSessionApiResponse = {
   };
 };
 
-type ReadyStateApiResponse = {
-  ok?: boolean;
-  code?: string;
-  message?: string;
-  readyState?: {
-    sessionId?: string;
-    viewerReady?: boolean;
-    streamerReady?: boolean;
-    viewerReadyAt?: string | null;
-    streamerReadyAt?: string | null;
-  };
-};
-
 type LiveRoomsBroadcastPayload = {
   action?: "started" | "stopped";
   roomId?: string;
@@ -1484,47 +1471,6 @@ export default function ViewerRoomClientPage() {
     }
   }
 
-  async function updatePrivateSessionReadyState(ready: boolean) {
-    if (!activePrivateSession?.sessionId) {
-      throw new Error("SESSION_NOT_FOUND");
-    }
-    const supabase = getSupabaseBrowserClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      window.location.href = "/login";
-      throw new Error("AUTH_REQUIRED");
-    }
-    const response = await fetch(`/api/private-sessions/${activePrivateSession.sessionId}/ready`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ ready }),
-      cache: "no-store",
-    });
-    const payload = (await response.json().catch(() => ({}))) as ReadyStateApiResponse;
-    if (!response.ok || !payload.ok || !payload.readyState) {
-      setPrivateSessionError(payload.message || "Hazır durumu güncellenemedi.");
-      throw new Error(payload.code || "READY_UPDATE_FAILED");
-    }
-    setPrivateSessionError(null);
-    setActivePrivateSession((previous) => {
-      if (!previous || previous.sessionId !== payload.readyState?.sessionId) {
-        return previous;
-      }
-      return {
-        ...previous,
-        viewerReady: Boolean(payload.readyState.viewerReady),
-        streamerReady: Boolean(payload.readyState.streamerReady),
-        viewerReadyAt: payload.readyState.viewerReadyAt ?? null,
-        streamerReadyAt: payload.readyState.streamerReadyAt ?? null,
-      };
-    });
-  }
-
   async function startPrivateSession(requestId: string) {
     if (!requestId || isPrivateSessionStarting || hasActivePrivateSession) {
       return;
@@ -1943,6 +1889,39 @@ export default function ViewerRoomClientPage() {
               {privateSessionError}
             </p>
           ) : null}
+          {activePrivateSession ? (
+            <div className="mt-2 rounded-2xl border border-violet-200 bg-white p-3 shadow-sm" data-testid="viewer-private-inline-bar">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">
+                  Yayinci ile ozel gorusmedesin
+                </span>
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  Ozel oda ucreti: {privateRoomPricePerMinute} dk / dakika
+                </span>
+              </div>
+              <PrivateRoomSessionPanel
+                sessionId={activePrivateSession.sessionId}
+                viewerName={activePrivateSession.viewerName}
+                streamerName={activePrivateSession.streamerName}
+                startedAt={activePrivateSession.startedAt}
+                currentUserRole="viewer"
+                viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
+                initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
+                lowBalanceThresholdMinutes={2}
+                autoEndWhenBalanceLikelyDepleted
+                onAutoEnd={() => endPrivateSession("balance_depleted")}
+                autoEndReason="Sure bittigi icin ozel gorusme kapatiliyor..."
+                onEnd={() => endPrivateSession()}
+                isEnding={isPrivateSessionEnding}
+                resultText={privateSessionResult ?? undefined}
+                errorText={privateSessionError ?? undefined}
+                onSendSignal={privateRoomSignaling.sendSignal}
+                lastSignal={privateRoomSignaling.lastSignal}
+                signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
+                currentUserId={state.userId}
+              />
+            </div>
+          ) : null}
         </div>
 
         <aside className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden">
@@ -2261,49 +2240,6 @@ export default function ViewerRoomClientPage() {
               )}
             </div>
           </div>
-        </div>
-      ) : null}
-
-      {activePrivateSession ? (
-        <div className="pointer-events-none fixed inset-x-3 bottom-3 top-20 z-40 md:inset-x-6 lg:inset-x-10 lg:top-24">
-          <section className="pointer-events-auto mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-violet-300 bg-white/95 shadow-2xl backdrop-blur">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-100 px-3 py-2 sm:px-4">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-600">Özel görüşme modu</p>
-                <h2 className="text-sm font-black text-zinc-900 sm:text-base">{activePrivateSession.streamerName} ile özel oda aktif</h2>
-              </div>
-              <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">Hazırlık ve bağlantı</span>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-2 sm:p-3">
-              <PrivateRoomSessionPanel
-                sessionId={activePrivateSession.sessionId}
-                viewerName={activePrivateSession.viewerName}
-                streamerName={activePrivateSession.streamerName}
-                startedAt={activePrivateSession.startedAt}
-                currentUserRole="viewer"
-                viewerReady={activePrivateSession.viewerReady}
-                streamerReady={activePrivateSession.streamerReady}
-                viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
-                initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
-                lowBalanceThresholdMinutes={2}
-                autoEndWhenBalanceLikelyDepleted
-                onAutoEnd={() => endPrivateSession("balance_depleted")}
-                autoEndReason="Süre bittiği için özel oda kapatılıyor..."
-                onEnd={() => endPrivateSession()}
-                onReadyChange={updatePrivateSessionReadyState}
-                isEnding={isPrivateSessionEnding}
-                resultText={privateSessionResult ?? undefined}
-                errorText={privateSessionError ?? undefined}
-                onSendSignal={privateRoomSignaling.sendSignal}
-                lastSignal={privateRoomSignaling.lastSignal}
-                lastSignalLabel={privateRoomSignaling.lastSignal?.signalType ?? null}
-                signalCount={privateRoomSignaling.signalCount}
-                lastSignalAt={privateRoomSignaling.lastSignalAt}
-                signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
-                currentUserId={state.userId}
-              />
-            </div>
-          </section>
         </div>
       ) : null}
 
