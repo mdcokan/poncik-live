@@ -243,6 +243,7 @@ export default function StudioPage() {
   const prevGiftEventCountRef = useRef(0);
   const shouldAutoScrollChatRef = useRef(true);
   const privateRequestsFetchInFlightRef = useRef(false);
+  const stageOverlayRef = useRef<HTMLDivElement | null>(null);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   const resetStudioLiveState = useCallback((endMessage: string) => {
@@ -1661,8 +1662,8 @@ export default function StudioPage() {
         </div>
       </header>
 
-      <section className="mx-auto grid min-h-[calc(100vh-64px)] max-w-[1800px] grid-cols-1 gap-3 p-3 lg:h-[calc(100dvh-64px)] lg:min-h-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(420px,1fr)] lg:overflow-hidden lg:gap-3 lg:p-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(440px,1fr)]">
-        <div className="flex min-h-0 flex-col rounded-3xl border border-white/70 bg-white/60 p-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm lg:overflow-hidden">
+      <section className="mx-auto grid min-h-[calc(100vh-64px)] max-w-[1800px] grid-cols-1 gap-2 p-2 lg:h-[calc(100dvh-64px)] lg:min-h-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(420px,1fr)] lg:overflow-hidden xl:grid-cols-[minmax(0,1.5fr)_minmax(440px,1fr)]">
+        <div className="flex min-h-0 flex-col rounded-3xl border border-white/70 bg-white/60 p-2 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm lg:overflow-hidden">
           {!loadingUser && !isStreamer ? (
             <div className="flex flex-1 items-center justify-center p-3">
               <div className="w-full max-w-xl rounded-3xl border border-pink-100 bg-white p-8 text-center shadow-lg">
@@ -1679,40 +1680,30 @@ export default function StudioPage() {
             </div>
           ) : (
             <>
-              <div className="mb-2 flex h-10 shrink-0 items-center gap-2 rounded-2xl border border-pink-100 bg-white px-3">
-                <span className="rounded-full bg-yellow-200 px-3 py-1 text-[11px] font-black text-zinc-800">Genel</span>
-                <span className="rounded-full bg-purple-100 px-3 py-1 text-[11px] font-bold text-purple-700">
-                  Yayıncı masası
+              <div className="mb-2 flex min-h-8 shrink-0 items-center gap-2 overflow-hidden rounded-xl border border-pink-100 bg-white px-2.5 text-[11px]">
+                <span className="rounded-full bg-yellow-200 px-2 py-0.5 font-bold text-zinc-800">Genel</span>
+                <span className={`rounded-full px-2 py-0.5 font-bold ${isBroadcastActive ? "bg-rose-100 text-rose-700" : "bg-zinc-100 text-zinc-600"}`}>
+                  {isBroadcastActive ? "Canli" : "Hazir"}
                 </span>
-                <span className="rounded-full bg-pink-100 px-3 py-1 text-[11px] font-semibold text-pink-600">Poncik tone</span>
-                {isRestricted ? (
-                  <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">Hesap kısıtlı</span>
-                ) : null}
-                {isBroadcastActive ? (
-                  <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">CANLI</span>
-                ) : null}
                 {activePrivateSession ? (
-                  <span
-                    data-testid="studio-private-busy-badge"
-                    className="rounded-full bg-violet-100 px-3 py-1 text-[11px] font-bold text-violet-700"
-                  >
-                    Özel görüşmedesin
+                  <span data-testid="studio-private-busy-badge" className="truncate text-violet-700">
+                    {`Ozel gorusme aktif · Uye ${activePrivateSession.viewerName}`}
                   </span>
                 ) : null}
+                {isRestricted ? <span className="ml-auto text-rose-700">Hesap kisitli</span> : null}
               </div>
 
               <div
-                className={`relative flex min-h-0 items-center justify-center overflow-hidden rounded-3xl border border-zinc-800/70 bg-zinc-950 p-2.5 sm:p-4 ${
-                  isLive ? "flex-[1.2]" : "flex-[0.95]"
-                }`}
+                className="relative flex min-h-[260px] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-zinc-800/70 bg-zinc-950 p-2 sm:p-3"
+                data-testid="studio-live-stage"
               >
                 <div className="w-full max-w-[1100px]">
                   <div
+                    ref={stageOverlayRef}
                     className={`relative aspect-video w-full overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-zinc-950 via-black to-pink-950/40 p-4 ${
                       mirrorVideo ? "scale-x-[-1]" : ""
                     }`}
                   >
-                    <div className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover" />
                     <div className="absolute left-3 top-3 z-20 flex flex-wrap items-center gap-2">
                       <span
                         className={`rounded-full px-3 py-1 text-[11px] font-bold ${
@@ -1721,9 +1712,14 @@ export default function StudioPage() {
                       >
                         {isLive ? "Canlı yayın" : "Kamera önizleme"}
                       </span>
-                      {isLive ? (
+                      {isLive && !activePrivateSession ? (
                         <span className="rounded-full bg-zinc-100/90 px-3 py-1 text-[11px] font-semibold text-zinc-800">
                           {streamTitle}
+                        </span>
+                      ) : null}
+                      {activePrivateSession ? (
+                        <span className="rounded-full bg-violet-500/85 px-3 py-1 text-[11px] font-semibold text-white" data-testid="studio-private-pill">
+                          {`Özel görüşme · Üye ${activePrivateSession.viewerName} · ${activePrivateSession.pricePerMinute ?? 1} dk/dk`}
                         </span>
                       ) : null}
                     </div>
@@ -1734,15 +1730,8 @@ export default function StudioPage() {
                     ) : null}
 
                     {!isLive ? (
-                      <div className="flex h-full items-center justify-center">
-                        <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-zinc-900/70 p-6 text-center shadow-2xl">
-                          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-pink-300">PONCIK LIVE</p>
-                          <h1 className="mt-3 text-2xl font-black text-white">Yayıncı Paneli</h1>
-                          <p className="mt-3 text-sm leading-6 text-zinc-300">
-                            Yayına çıkmadan önce kamera ve mikrofon ayarlarını yapılandır. Hazır olduğunda
-                            tek tuşla canlı yayına başla.
-                          </p>
-                        </div>
+                      <div className="flex h-full items-center justify-center text-center">
+                        <h2 className="text-xl font-black text-white">Yayina hazir</h2>
                       </div>
                     ) : (
                       <div className="flex h-full items-center justify-center text-center">
@@ -1752,7 +1741,6 @@ export default function StudioPage() {
                             CANLI
                           </span>
                           <h2 className="mt-4 text-2xl font-black text-white sm:text-3xl">{streamTitle}</h2>
-                          <p className="mt-2 text-sm text-zinc-300">İzleyiciler seni online yayınlarda görebilir.</p>
                         </div>
                       </div>
                     )}
@@ -1761,26 +1749,26 @@ export default function StudioPage() {
                 </div>
               </div>
               {isBroadcastActive ? (
-                <div className="my-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-rose-100 bg-white px-3 py-2 shadow-sm">
+                <div className="my-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-100 bg-white px-2.5 py-1.5 shadow-sm">
                   <button
                     type="button"
                     data-testid="studio-stop-live-button"
                     onClick={handleStopLive}
                     disabled={isBusy || !isStreamer || isRestricted}
-                    className="rounded-xl bg-rose-500 px-4 py-2 text-xs font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="rounded-lg bg-rose-500 px-3 py-1.5 text-[11px] font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {status === "loading" ? "Yayın kapatılıyor..." : "YAYINI BİTİR"}
+                    {status === "loading" ? "Kapatiliyor..." : "Yayini Bitir"}
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowLiveSettings((prev) => !prev)}
-                    className="rounded-xl border border-pink-200 bg-pink-50 px-4 py-2 text-xs font-bold text-pink-700 transition hover:bg-pink-100"
+                    className="rounded-lg border border-pink-200 bg-pink-50 px-3 py-1.5 text-[11px] font-bold text-pink-700 transition hover:bg-pink-100"
                   >
-                    {showLiveSettings ? "Kamera Ayarlarını Gizle" : "Kamera Ayarlarını Göster"}
+                    {showLiveSettings ? "Kamera Gizle" : "Kamera Goster"}
                   </button>
                   {message ? (
                     <span
-                      className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                         status === "success" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
                       }`}
                     >
@@ -1790,23 +1778,18 @@ export default function StudioPage() {
                 </div>
               ) : null}
               {activePrivateSession ? (
-                <div className="my-2 shrink-0 rounded-2xl border border-violet-200 bg-white p-3 shadow-sm" data-testid="studio-private-inline-bar">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">
-                      Ozel gorusme aktif: Uye {activePrivateSession.viewerName}
-                    </span>
-                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Tarife aktif</span>
-                    <button
-                      type="button"
-                      data-testid="studio-stop-live-private-button"
-                      onClick={handleStopLive}
-                      disabled={isBusy || !isStreamer || isRestricted}
-                      className="rounded-xl bg-rose-500 px-3 py-1.5 text-xs font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {status === "loading" ? "Yayin kapatiliyor..." : "Yayini Bitir"}
-                    </button>
-                  </div>
+                <div className="my-1 shrink-0" data-testid="studio-private-inline-bar">
+                  <button
+                    type="button"
+                    data-testid="studio-stop-live-private-button"
+                    onClick={handleStopLive}
+                    disabled={isBusy || !isStreamer || isRestricted}
+                    className="mb-1 rounded-lg bg-rose-500 px-2.5 py-1 text-[11px] font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Yayini Bitir
+                  </button>
                   <PrivateRoomSessionPanel
+                    stageOverlayRef={stageOverlayRef}
                     sessionId={activePrivateSession.sessionId}
                     viewerName={activePrivateSession.viewerName}
                     streamerName={activePrivateSession.streamerName}
@@ -1940,27 +1923,55 @@ export default function StudioPage() {
                 </div>
               ) : null}
 
-              <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3">
-                <button className="rounded-2xl bg-yellow-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
+              <div
+                className="mt-2 grid shrink-0 grid-cols-2 gap-1.5 md:grid-cols-4 xl:grid-cols-7"
+                data-testid="studio-primary-action-toolbar"
+              >
+                <button className="rounded-xl bg-yellow-300 px-3 py-1.5 text-xs font-black text-zinc-800 transition hover:brightness-95">
                   CANLI DESTEK
                 </button>
-                <button className="rounded-2xl bg-orange-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
-                  HEDİYE LİSTESİ
+                <button className="rounded-xl bg-orange-300 px-3 py-1.5 text-xs font-black text-zinc-800 transition hover:brightness-95">
+                  HEDIYE
                 </button>
                 <button
                   type="button"
                   data-testid="studio-dm-open-button"
                   onClick={() => setShowDmOverlay(true)}
-                  className="rounded-2xl bg-pink-400 px-4 py-2 text-sm font-black text-white transition hover:bg-pink-300"
+                  className="rounded-xl bg-pink-400 px-3 py-1.5 text-xs font-black text-white transition hover:bg-pink-300"
                 >
-                  Mesajlarım
+                  MESAJ
                 </button>
+                <button className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-700">OZEL ODA</button>
+                <button className="rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs font-bold text-zinc-700">KAMERA</button>
+                <button className="rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs font-bold text-zinc-700">MIKROFON</button>
+                {isBroadcastActive ? (
+                  <button
+                    type="button"
+                    onClick={handleStopLive}
+                    disabled={isBusy || !isStreamer || isRestricted}
+                    className="rounded-xl bg-rose-500 px-3 py-1.5 text-xs font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    YAYINI BITIR
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleStartLive}
+                    disabled={isBusy || !isStreamer || isRestricted}
+                    className="rounded-xl bg-emerald-400 px-3 py-1.5 text-xs font-black text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    YAYINA BASLA
+                  </button>
+                )}
               </div>
             </>
           )}
         </div>
 
-        <aside className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden">
+        <aside
+          className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden"
+          data-testid="studio-right-panel"
+        >
           <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200 px-2 py-1" data-testid="studio-side-tabs">
             <button
               type="button"

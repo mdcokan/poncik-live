@@ -16,6 +16,10 @@ import {
   LIVE_ROOMS_BROADCAST_CHANNEL,
   LIVE_ROOMS_CHANGED_EVENT,
 } from "@/lib/supabase-browser";
+import LiveActionRail from "@/components/live/LiveActionRail";
+import LiveBottomSheet from "@/components/live/LiveBottomSheet";
+import LiveMobileShell from "@/components/live/LiveMobileShell";
+import LiveStage from "@/components/live/LiveStage";
 import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
 import PrivateSessionEndedSummary, {
   type PrivateSessionCloseSummary,
@@ -267,6 +271,8 @@ export default function ViewerRoomClientPage() {
   });
   const [hasFetchError, setHasFetchError] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "participants" | "gift">("chat");
+  const [mobileSheet, setMobileSheet] = useState<"chat" | "participants" | "gift" | null>(null);
+  const [isLargeScreen, setIsLargeScreen] = useState(false);
   const [messages, setMessages] = useState<RoomMessage[]>([]);
   const [chatBody, setChatBody] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -330,6 +336,19 @@ export default function ViewerRoomClientPage() {
   const shouldAutoScrollChatRef = useRef(true);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const roomPrivateSessionRefreshInFlightRef = useRef(false);
+  const stageOverlayRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1024px)");
+    const sync = () => {
+      setIsLargeScreen(query.matches);
+    };
+    sync();
+    query.addEventListener("change", sync);
+    return () => {
+      query.removeEventListener("change", sync);
+    };
+  }, []);
 
   const isLive = state.room?.status === "live";
   const isRoomOpenForViewer = state.room?.status === "live" || state.room?.status === "private_busy";
@@ -1580,7 +1599,7 @@ export default function ViewerRoomClientPage() {
   }
 
   useEffect(() => {
-    if (activeTab !== "gift" || hasGiftCatalogLoaded) {
+    if ((activeTab !== "gift" && mobileSheet !== "gift") || hasGiftCatalogLoaded) {
       return;
     }
 
@@ -1618,7 +1637,7 @@ export default function ViewerRoomClientPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, hasGiftCatalogLoaded]);
+  }, [activeTab, hasGiftCatalogLoaded, mobileSheet]);
 
   useEffect(() => {
     if (!roomId || !isLive) {
@@ -1762,16 +1781,89 @@ export default function ViewerRoomClientPage() {
   const streamerName = getStreamerName(state.room, state.ownerProfile);
   const chatValidationError =
     chatBody.trim().length > 500 ? "Mesaj en fazla 500 karakter olabilir." : chatBody.length > 0 && !chatBody.trim() ? "Bos mesaj gonderilemez." : null;
+  const mobileChatPreview = messages.slice(-4);
+  const privatePill = activePrivateSession ? (
+    <span
+      className="rounded-full bg-violet-500/85 px-2.5 py-0.5 text-[10px] font-semibold text-white"
+      data-testid="viewer-private-pill"
+    >
+      {`Özel · ${activePrivateSession.viewerName} · ${privateRoomPricePerMinute} dk/dk`}
+    </span>
+  ) : null;
+  const mobileActionRailItems = [
+    {
+      id: "support",
+      label: "Destek",
+      onClick: () => {},
+      tone: "default" as const,
+    },
+    {
+      id: "dm",
+      label: "Mesaj",
+      testId: "room-dm-open-button",
+      disabled: !state.room?.owner_id,
+      onClick: () => {
+        if (!state.room?.owner_id) {
+          return;
+        }
+        setShowDmOverlay(true);
+      },
+      tone: "accent" as const,
+    },
+    {
+      id: "chat",
+      label: "Sohbet",
+      testId: "room-mobile-chat-sheet-button",
+      onClick: () => {
+        setActiveTab("chat");
+        setMobileSheet("chat");
+      },
+      tone: "default" as const,
+    },
+    {
+      id: "gift",
+      label: "Hediye",
+      testId: "room-mobile-gift-sheet-button",
+      onClick: () => {
+        setActiveTab("gift");
+        setMobileSheet("gift");
+      },
+      tone: "default" as const,
+    },
+    {
+      id: "participants",
+      label: "Odada",
+      testId: "room-mobile-participants-sheet-button",
+      onClick: () => {
+        setActiveTab("participants");
+        setMobileSheet("participants");
+      },
+      tone: "default" as const,
+    },
+    ...(activePrivateSession
+      ? []
+      : [
+          {
+            id: "private",
+            label: isPrivateRequestPending ? "..." : "Özel",
+            testId: "private-room-request-button",
+            disabled: isPrivateRequestDisabled,
+            onClick: () => {
+              void handleCreatePrivateRoomRequest();
+            },
+            tone: "violet" as const,
+          },
+        ]),
+  ];
 
   return (
-    <main className="min-h-screen bg-[#eef7fb] text-zinc-900 lg:h-[100dvh] lg:overflow-hidden">
-      <header className="h-16 border-b border-pink-100/80 bg-white/80 backdrop-blur">
+    <main className="min-h-screen overflow-x-hidden bg-[#eef7fb] text-zinc-900 lg:h-[100dvh] lg:overflow-hidden">
+      <header className="hidden h-16 border-b border-pink-100/80 bg-white/80 backdrop-blur lg:block">
         <div className="mx-auto flex h-full max-w-[1800px] items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-3">
             <Link href="/" className="text-lg font-black tracking-tight text-zinc-900 sm:text-xl">
               Poncik<span className="text-pink-400">Live</span>
             </Link>
-            <span className="rounded-full bg-yellow-300 px-3 py-1 text-xs font-black text-black">Genel</span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -1786,145 +1878,349 @@ export default function ViewerRoomClientPage() {
         </div>
       </header>
 
-      <section className="mx-auto grid min-h-[calc(100vh-64px)] max-w-[1800px] grid-cols-1 gap-3 p-3 lg:h-[calc(100dvh-64px)] lg:min-h-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(420px,1fr)] lg:overflow-hidden lg:gap-3 lg:p-3">
-        <div className="flex min-h-0 flex-col rounded-3xl border border-white/70 bg-white/60 p-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm lg:overflow-hidden">
-          <div className="mb-2 flex h-10 shrink-0 items-center gap-2 rounded-2xl border border-pink-100 bg-white px-3">
-            <span className="rounded-full bg-yellow-200 px-3 py-1 text-[11px] font-black text-zinc-800">Genel</span>
-            <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-700">CANLI</span>
+      <section className="mx-auto grid h-[100dvh] max-w-[1800px] grid-cols-1 overflow-hidden lg:h-[calc(100dvh-64px)] lg:grid-cols-[minmax(0,1.45fr)_minmax(420px,1fr)] lg:overflow-hidden">
+      <LiveMobileShell
+        header={!isLargeScreen ? (
+          <div className="flex h-10 shrink-0 items-center justify-between border-b border-pink-100/80 bg-white/90 px-3 backdrop-blur">
+            <Link href="/" className="text-sm font-black tracking-tight text-zinc-900">
+              Poncik<span className="text-pink-400">Live</span>
+            </Link>
+            <Link href="/rooms" className="text-[11px] font-semibold text-zinc-600">
+              Odalar
+            </Link>
           </div>
-
-          <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-3xl border border-zinc-800/70 bg-zinc-950 p-3 sm:p-4">
-            <div className="w-full max-w-[1100px]">
-              <div className="relative aspect-video w-full overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-zinc-950 via-black to-pink-950/40 p-4">
-                <div className="absolute left-3 top-3 z-20 flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-rose-500/90 px-3 py-1 text-[11px] font-bold text-white">Canli yayin</span>
+        ) : undefined}
+        stage={
+          <LiveStage
+            stageTestId="room-live-stage"
+            stageOverlayRef={stageOverlayRef}
+            streamerName={streamerName}
+            giftOverlayText={giftOverlayText}
+            isLive={isLive}
+            privatePill={privatePill}
+            className="h-full min-h-[58dvh] rounded-2xl"
+            actionRail={!isLargeScreen ? <LiveActionRail items={mobileActionRailItems} /> : undefined}
+            chatOverlay={
+              mobileSheet === null && mobileChatPreview.length > 0 ? (
+                <div className="pointer-events-none absolute bottom-16 left-3 right-16 z-20 space-y-1.5" data-testid="room-mobile-chat-overlay">
+                  {mobileChatPreview.map((message) => (
+                    <article key={message.id} className="rounded-xl bg-black/55 px-2.5 py-1.5 text-[11px] text-white backdrop-blur-sm">
+                      <span className="font-bold text-pink-200">{message.senderName}: </span>
+                      <span className="text-zinc-100">{message.body}</span>
+                    </article>
+                  ))}
                 </div>
-                {giftOverlayText ? (
-                  <div className="absolute bottom-3 left-3 right-3 z-20 rounded-xl border border-pink-200/70 bg-black/60 px-3 py-2 text-xs font-semibold text-pink-100 sm:left-auto sm:w-[420px]">
-                    {giftOverlayText}
-                  </div>
-                ) : null}
-                <div className="flex h-full items-center justify-center text-center">
-                  <div className="absolute inset-0 rounded-3xl bg-[radial-gradient(circle_at_50%_30%,rgba(255,44,122,0.2),transparent_60%)]" />
-                  <div className="relative w-full max-w-2xl">
-                    <span className="inline-flex rounded-full bg-rose-500 px-5 py-1.5 text-sm font-black tracking-wide text-white shadow-lg">
-                      CANLI
-                    </span>
-                    <h1 className="mt-4 text-2xl font-black text-white sm:text-3xl">{streamerName}</h1>
-                    <p className="mt-3 text-sm text-zinc-300">
-                      Yayin canli. Sohbet aktif, hediyeler anlik olarak panelde gorunur.
-                    </p>
-                  </div>
-                </div>
-              </div>
+              ) : null
+            }
+          />
+        }
+        afterStage={isLargeScreen ? (
+          <div className="shrink-0 flex-col gap-2">
+            <div className="mb-2 flex min-h-8 items-center gap-2 rounded-xl border border-pink-100 bg-white px-2.5 text-[11px]">
+              <span className="rounded-full bg-rose-100 px-2 py-0.5 font-bold text-rose-700">Canli</span>
+              {activePrivateSession ? (
+                <span className="truncate text-violet-700" data-testid="viewer-private-pill">
+                  {`Özel · ${activePrivateSession.viewerName} · ${privateRoomPricePerMinute} dk/dk`}
+                </span>
+              ) : null}
             </div>
-          </div>
-          <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
-            <button className="rounded-2xl bg-yellow-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
-              CANLI DESTEK
-            </button>
-            <button className="rounded-2xl bg-orange-300 px-4 py-2 text-sm font-black text-zinc-800 transition hover:brightness-95">
-              HEDIYE LISTESI
-            </button>
-            <button
-              type="button"
-              data-testid="room-dm-open-button"
-              disabled={!state.room?.owner_id}
-              onClick={() => {
-                if (!state.room?.owner_id) {
-                  return;
-                }
-                setShowDmOverlay(true);
-              }}
-              className="rounded-2xl bg-pink-400 px-4 py-2 text-sm font-black text-white transition hover:bg-pink-300 disabled:cursor-not-allowed disabled:bg-zinc-300"
-            >
-              Mesaj Gönder
-            </button>
-            <button
-              type="button"
-              data-testid="private-room-request-button"
-              onClick={() => {
-                void handleCreatePrivateRoomRequest();
-              }}
-              disabled={isPrivateRequestDisabled}
-              className="rounded-2xl bg-violet-500 px-4 py-2 text-sm font-black text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-zinc-300"
-            >
-              {isPrivateRequestPending ? "GONDERILIYOR..." : "OZEL ODA DAVETI"}
-            </button>
-          </div>
-          <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-room-price-label">
-            Özel oda ücreti: {privateRoomPricePerMinute} dk / dakika
-          </p>
-          {privateRequestFeedback ? (
-            /talebiniz kabul edildi|talebiniz reddedildi/i.test(privateRequestFeedback) ? (
-              <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-request-status-message">
-                {privateRequestFeedback}
+            <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4 xl:grid-cols-7" data-testid="room-primary-action-toolbar">
+              <button className="rounded-xl bg-yellow-300 px-3 py-1.5 text-xs font-black text-zinc-800 transition hover:brightness-95">
+                CANLI DESTEK
+              </button>
+              <button className="rounded-xl bg-orange-300 px-3 py-1.5 text-xs font-black text-zinc-800 transition hover:brightness-95">
+                HEDIYE
+              </button>
+              <button
+                type="button"
+                data-testid="room-dm-open-button"
+                disabled={!state.room?.owner_id}
+                onClick={() => {
+                  if (!state.room?.owner_id) {
+                    return;
+                  }
+                  setShowDmOverlay(true);
+                }}
+                className="rounded-xl bg-pink-400 px-3 py-1.5 text-xs font-black text-white transition hover:bg-pink-300 disabled:cursor-not-allowed disabled:bg-zinc-300"
+              >
+                MESAJ
+              </button>
+              <button
+                type="button"
+                data-testid="private-room-request-button"
+                onClick={() => {
+                  void handleCreatePrivateRoomRequest();
+                }}
+                disabled={isPrivateRequestDisabled}
+                className="rounded-xl bg-violet-500 px-3 py-1.5 text-xs font-black text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-zinc-300"
+              >
+                {isPrivateRequestPending ? "GONDERILIYOR..." : "OZEL ODA"}
+              </button>
+            </div>
+            <p className="text-[11px] font-semibold text-violet-700" data-testid="private-room-price-label">
+              Özel oda ücreti: {privateRoomPricePerMinute} dk / dakika
+            </p>
+            {privateRequestFeedback ? (
+              /talebiniz kabul edildi|talebiniz reddedildi/i.test(privateRequestFeedback) ? (
+                <p className="text-xs font-semibold text-violet-700" data-testid="private-request-status-message">
+                  {privateRequestFeedback}
+                </p>
+              ) : (
+                <p className="text-xs font-semibold text-violet-700" data-testid="private-request-feedback">
+                  {privateRequestFeedback}
+                </p>
+              )
+            ) : null}
+            {roomPrivateBusyNoticeVisible ? (
+              <p className="text-[11px] font-semibold text-amber-700" data-testid="room-private-busy-notice">
+                Yayıncı özel görüşmeye geçti.
               </p>
-            ) : (
-              <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-request-feedback">
-                {privateRequestFeedback}
+            ) : null}
+            {roomPrivateBusyNoticeVisible ? (
+              <p className="text-[11px] text-zinc-600" data-testid="room-private-busy-redirecting">
+                Anasayfaya yönlendiriliyorsunuz.
               </p>
-            )
-          ) : null}
-          {roomPrivateBusyNoticeVisible ? (
-            <p className="mt-2 text-xs font-semibold text-amber-700" data-testid="room-private-busy-notice">
-              Yayıncı özel görüşmeye geçti.
-            </p>
-          ) : null}
-          {roomPrivateBusyNoticeVisible ? (
-            <p className="mt-1 text-xs text-zinc-600">
-              Bu sırada sohbet, hediye gönderimi ve özel oda daveti geçici olarak kapalıdır. Anasayfaya yönlendiriliyorsunuz.
-            </p>
-          ) : null}
-          {roomPrivateBusyNoticeVisible && roomPrivateBusyRedirecting ? (
-            <p className="mt-1 text-xs text-zinc-600" data-testid="room-private-busy-redirecting">
-              Anasayfaya yönlendiriliyorsunuz.
-            </p>
-          ) : null}
-          {!activePrivateSession && privateSessionResult ? (
-            <PrivateSessionEndedSummary role="viewer" resultText={privateSessionResult} summary={privateSessionCloseSummary} />
-          ) : null}
-          {!activePrivateSession && privateSessionError ? (
-            <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-session-error">
-              {privateSessionError}
-            </p>
-          ) : null}
-          {activePrivateSession ? (
-            <div className="mt-2 rounded-2xl border border-violet-200 bg-white p-3 shadow-sm" data-testid="viewer-private-inline-bar">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">
-                  Yayinci ile ozel gorusmedesin
-                </span>
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                  Ozel oda ucreti: {privateRoomPricePerMinute} dk / dakika
-                </span>
+            ) : null}
+            {!activePrivateSession && privateSessionResult ? (
+              <PrivateSessionEndedSummary role="viewer" resultText={privateSessionResult} summary={privateSessionCloseSummary} />
+            ) : null}
+            {!activePrivateSession && privateSessionError ? (
+              <p className="text-xs font-semibold text-rose-700" data-testid="private-session-error">
+                {privateSessionError}
+              </p>
+            ) : null}
+            {activePrivateSession ? (
+              <div className="shrink-0" data-testid="viewer-private-inline-bar">
+                <PrivateRoomSessionPanel
+                  stageOverlayRef={stageOverlayRef}
+                  sessionId={activePrivateSession.sessionId}
+                  viewerName={activePrivateSession.viewerName}
+                  streamerName={activePrivateSession.streamerName}
+                  startedAt={activePrivateSession.startedAt}
+                  currentUserRole="viewer"
+                  viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
+                  initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
+                  lowBalanceThresholdMinutes={2}
+                  autoEndWhenBalanceLikelyDepleted
+                  onAutoEnd={() => endPrivateSession("balance_depleted")}
+                  autoEndReason="Sure bittigi icin ozel gorusme kapatiliyor..."
+                  onEnd={() => endPrivateSession()}
+                  isEnding={isPrivateSessionEnding}
+                  resultText={privateSessionResult ?? undefined}
+                  errorText={privateSessionError ?? undefined}
+                  onSendSignal={privateRoomSignaling.sendSignal}
+                  lastSignal={privateRoomSignaling.lastSignal}
+                  signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
+                  currentUserId={state.userId}
+                />
               </div>
-              <PrivateRoomSessionPanel
-                sessionId={activePrivateSession.sessionId}
-                viewerName={activePrivateSession.viewerName}
-                streamerName={activePrivateSession.streamerName}
-                startedAt={activePrivateSession.startedAt}
-                currentUserRole="viewer"
-                viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
-                initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
-                lowBalanceThresholdMinutes={2}
-                autoEndWhenBalanceLikelyDepleted
-                onAutoEnd={() => endPrivateSession("balance_depleted")}
-                autoEndReason="Sure bittigi icin ozel gorusme kapatiliyor..."
-                onEnd={() => endPrivateSession()}
-                isEnding={isPrivateSessionEnding}
-                resultText={privateSessionResult ?? undefined}
-                errorText={privateSessionError ?? undefined}
-                onSendSignal={privateRoomSignaling.sendSignal}
-                lastSignal={privateRoomSignaling.lastSignal}
-                signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
-                currentUserId={state.userId}
+            ) : null}
+          </div>
+        ) : undefined}
+        footer={!isLargeScreen ? (
+          <div className="shrink-0 border-t border-pink-100 bg-white/95 p-2 backdrop-blur">
+            <p className="mb-2 text-[11px] font-semibold text-violet-700" data-testid="private-room-price-label">
+              Özel oda ücreti: {privateRoomPricePerMinute} dk / dakika
+            </p>
+            {privateRequestFeedback ? (
+              /talebiniz kabul edildi|talebiniz reddedildi/i.test(privateRequestFeedback) ? (
+                <p className="mb-2 text-xs font-semibold text-violet-700" data-testid="private-request-status-message">
+                  {privateRequestFeedback}
+                </p>
+              ) : (
+                <p className="mb-2 text-xs font-semibold text-violet-700" data-testid="private-request-feedback">
+                  {privateRequestFeedback}
+                </p>
+              )
+            ) : null}
+            {roomPrivateBusyNoticeVisible ? (
+              <p className="mb-1 text-[11px] font-semibold text-amber-700" data-testid="room-private-busy-notice">
+                Yayıncı özel görüşmeye geçti.
+              </p>
+            ) : null}
+            {roomPrivateBusyNoticeVisible ? (
+              <p className="mb-2 text-[11px] text-zinc-600" data-testid="room-private-busy-redirecting">
+                Anasayfaya yönlendiriliyorsunuz.
+              </p>
+            ) : null}
+            {!activePrivateSession && privateSessionResult ? (
+              <PrivateSessionEndedSummary role="viewer" resultText={privateSessionResult} summary={privateSessionCloseSummary} />
+            ) : null}
+            {!activePrivateSession && privateSessionError ? (
+              <p className="mb-2 text-xs font-semibold text-rose-700" data-testid="private-session-error">
+                {privateSessionError}
+              </p>
+            ) : null}
+            {activePrivateSession ? (
+              <div className="mb-2" data-testid="viewer-private-inline-bar">
+                <PrivateRoomSessionPanel
+                  stageOverlayRef={stageOverlayRef}
+                  sessionId={activePrivateSession.sessionId}
+                  viewerName={activePrivateSession.viewerName}
+                  streamerName={activePrivateSession.streamerName}
+                  startedAt={activePrivateSession.startedAt}
+                  currentUserRole="viewer"
+                  viewerBalanceMinutes={activePrivateSession.viewerBalanceMinutes ?? null}
+                  initialEstimatedRemainingMinutes={activePrivateSession.estimatedRemainingMinutes ?? null}
+                  lowBalanceThresholdMinutes={2}
+                  autoEndWhenBalanceLikelyDepleted
+                  onAutoEnd={() => endPrivateSession("balance_depleted")}
+                  autoEndReason="Sure bittigi icin ozel gorusme kapatiliyor..."
+                  onEnd={() => endPrivateSession()}
+                  isEnding={isPrivateSessionEnding}
+                  resultText={privateSessionResult ?? undefined}
+                  errorText={privateSessionError ?? undefined}
+                  onSendSignal={privateRoomSignaling.sendSignal}
+                  lastSignal={privateRoomSignaling.lastSignal}
+                  signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
+                  currentUserId={state.userId}
+                  compact
+                />
+              </div>
+            ) : null}
+            <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
+              <input
+                data-testid="room-chat-input"
+                value={chatBody}
+                maxLength={500}
+                onChange={(event) => setChatBody(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleSendMessage();
+                  }
+                }}
+                disabled={isChatInputDisabled}
+                placeholder="Mesajinizi buraya yaziniz..."
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500"
               />
+              <button
+                type="button"
+                data-testid="room-chat-send-button"
+                onClick={() => {
+                  void handleSendMessage();
+                }}
+                disabled={isChatInputDisabled || Boolean(chatValidationError)}
+                className="inline-flex rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm disabled:opacity-60"
+              >
+                {isSending ? "..." : "Gonder"}
+              </button>
             </div>
-          ) : null}
-        </div>
-
-        <aside className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden">
+            {chatValidationError ? <p className="mt-1 text-xs text-rose-600">{chatValidationError}</p> : null}
+          </div>
+        ) : undefined}
+        sheets={
+          <>
+            <LiveBottomSheet
+              open={mobileSheet === "chat"}
+              title="Sohbet"
+              testId="room-mobile-chat-sheet"
+              onClose={() => setMobileSheet(null)}
+            >
+              <div
+                ref={chatScrollRef}
+                onScroll={(event) => {
+                  const element = event.currentTarget;
+                  tabScrollPositionsRef.current.chat = element.scrollTop;
+                  const nextNearBottom = isNearBottom(element);
+                  shouldAutoScrollChatRef.current = nextNearBottom;
+                  if (nextNearBottom) {
+                    setUnreadChatCount(0);
+                  }
+                }}
+                className="px-4 py-4"
+                data-testid="room-tabpanel-chat"
+              >
+                <div data-testid="room-chat-message-list">
+                  {messages.length === 0 ? (
+                    <p className="text-sm text-zinc-500">Henuz sohbet mesaji yok.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {messages.map((message) => (
+                        <article key={message.id} data-testid="room-chat-message" className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm">
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className="font-bold text-pink-600">{message.senderName}</span>
+                            <span className="text-zinc-400">
+                              {new Date(message.createdAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-700">{message.body}</p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </LiveBottomSheet>
+            <LiveBottomSheet
+              open={mobileSheet === "participants"}
+              title="Odadakiler"
+              testId="room-mobile-participants-sheet"
+              onClose={() => setMobileSheet(null)}
+            >
+              <div ref={participantsScrollRef} className="px-4 py-4" data-testid="room-tabpanel-participants">
+                <section className="rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
+                  {presenceUsers.length === 0 ? (
+                    <p className="text-sm text-zinc-500">Aktif odadaki uye yok.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {presenceUsers.map((presenceUser) => (
+                        <article key={presenceUser.id} className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2" data-testid="room-presence-user">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="truncate text-sm font-semibold text-zinc-800">{presenceUser.displayName}</p>
+                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold text-zinc-700">
+                              {getPresenceRoleLabel(presenceUser.role)}
+                            </span>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
+            </LiveBottomSheet>
+            <LiveBottomSheet
+              open={mobileSheet === "gift"}
+              title="Hediye"
+              testId="room-mobile-gift-sheet"
+              onClose={() => setMobileSheet(null)}
+            >
+              <div ref={giftsScrollRef} className="px-4 py-4" data-testid="room-tabpanel-gifts">
+                {isGiftCatalogLoading ? (
+                  <p className="text-sm text-zinc-500">Hediye katalogu yukleniyor...</p>
+                ) : giftCatalog.length === 0 ? (
+                  <p className="text-sm text-zinc-500">Henuz aktif hediye yok.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {giftCatalog.map((giftItem) => (
+                      <article key={giftItem.id} className="rounded-2xl border border-pink-100 bg-white p-3 shadow-sm">
+                        <p className="text-2xl leading-none">{giftItem.emoji}</p>
+                        <p className="mt-2 text-sm font-black text-zinc-800">{giftItem.name}</p>
+                        <p className="mt-1 text-xs font-semibold text-pink-600">{getGiftMinuteCost(giftItem)} dk</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleSendGift(giftItem);
+                          }}
+                          disabled={isGiftSendDisabled}
+                          className="mt-2 rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 disabled:cursor-not-allowed disabled:text-zinc-400"
+                        >
+                          {pendingGiftId === giftItem.id ? "Gonderiliyor..." : "Gonder"}
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </LiveBottomSheet>
+          </>
+        }
+      />
+        {isLargeScreen ? (
+        <aside
+          className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden"
+          data-testid="room-right-panel"
+        >
           <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200 px-2 py-1" data-testid="room-side-tabs">
             <button
               type="button"
@@ -2195,6 +2491,7 @@ export default function ViewerRoomClientPage() {
             ) : null}
           </div>
         </aside>
+        ) : null}
       </section>
       {showDmOverlay ? (
         <div

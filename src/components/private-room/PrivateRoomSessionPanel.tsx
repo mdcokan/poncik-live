@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { useLocalMediaPreview } from "@/hooks/use-local-media-preview";
 import type { PrivateRoomSignal, PrivateRoomSignalType } from "@/hooks/use-private-room-signaling";
 import { usePrivateRoomWebRtc } from "@/hooks/use-private-room-webrtc";
+import PrivateLocalPip from "@/components/private-room/PrivateLocalPip";
 
 type PrivateRoomSessionPanelProps = {
   sessionId: string;
@@ -26,6 +28,8 @@ type PrivateRoomSessionPanelProps = {
   signalingErrorText?: string | null;
   enableWebRtc?: boolean;
   currentUserId?: string | null;
+  stageOverlayRef?: RefObject<HTMLElement | null>;
+  compact?: boolean;
 };
 
 function formatElapsed(seconds: number) {
@@ -53,6 +57,27 @@ function mapWebRtcConnectionLabel(state: string) {
   }
 }
 
+function usePortalTarget(anchorRef?: RefObject<HTMLElement | null>, refreshKey?: string) {
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!anchorRef) {
+      setTarget(null);
+      return;
+    }
+    const syncTarget = () => {
+      setTarget(anchorRef.current);
+    };
+    syncTarget();
+    const timer = window.setTimeout(syncTarget, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [anchorRef, refreshKey]);
+
+  return target;
+}
+
 export default function PrivateRoomSessionPanel({
   sessionId,
   viewerName,
@@ -74,13 +99,17 @@ export default function PrivateRoomSessionPanel({
   signalingErrorText = null,
   enableWebRtc = true,
   currentUserId = null,
+  stageOverlayRef,
+  compact = false,
 }: PrivateRoomSessionPanelProps) {
   const { stream, isCameraEnabled, isMicEnabled, requestMedia, toggleCamera, toggleMic } = useLocalMediaPreview();
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const autoEndTriggeredRef = useRef(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isAutoEnding, setIsAutoEnding] = useState(false);
+  const [isLocalPipExpanded, setIsLocalPipExpanded] = useState(false);
+  const [isRemotePipExpanded, setIsRemotePipExpanded] = useState(false);
+  const [isRemotePipVisible, setIsRemotePipVisible] = useState(true);
+  const stagePortalTarget = usePortalTarget(stageOverlayRef, sessionId);
 
   const displayOtherUserName =
     currentUserRole === "viewer" ? (streamerName.trim() || "Yayıncı") : (viewerName.trim() || "Üye");
@@ -109,22 +138,6 @@ export default function PrivateRoomSessionPanel({
     sendSignal: onSendSignal ?? (async () => {}),
     lastSignal,
   });
-
-  useEffect(() => {
-    const el = remoteVideoRef.current;
-    if (!el) {
-      return;
-    }
-    el.srcObject = webrtc.remoteStream;
-  }, [webrtc.remoteStream]);
-
-  useEffect(() => {
-    const el = localVideoRef.current;
-    if (!el) {
-      return;
-    }
-    el.srcObject = stream;
-  }, [stream]);
 
   useEffect(() => {
     function syncElapsed() {
@@ -165,53 +178,106 @@ export default function PrivateRoomSessionPanel({
     viewerBalanceMinutes,
   ]);
 
+  useEffect(() => {
+    if (webrtc.remoteStream) {
+      setIsRemotePipVisible(true);
+    }
+  }, [webrtc.remoteStream]);
+
+  const stagePipOverlay =
+    stagePortalTarget && currentUserRole === "viewer" && stream && isCameraEnabled ? (
+      <PrivateLocalPip
+        stream={stream}
+        visible
+        expanded={isLocalPipExpanded}
+        onToggleSize={() => {
+          setIsLocalPipExpanded((previous) => !previous);
+        }}
+        onClose={() => {
+          toggleCamera();
+        }}
+        mirror
+      />
+    ) : stagePortalTarget && currentUserRole === "streamer" && webrtc.remoteStream && isRemotePipVisible ? (
+      <PrivateLocalPip
+        stream={webrtc.remoteStream}
+        visible
+        expanded={isRemotePipExpanded}
+        onToggleSize={() => {
+          setIsRemotePipExpanded((previous) => !previous);
+        }}
+        onClose={() => {
+          setIsRemotePipVisible(false);
+        }}
+        testId="private-remote-pip"
+        videoTestId="private-remote-pip-video"
+      />
+    ) : null;
+
   return (
+  <>
+    {stagePortalTarget && stagePipOverlay ? createPortal(stagePipOverlay, stagePortalTarget) : null}
     <section
-      className="mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4"
+      className={compact ? "mt-0 border-0 bg-transparent p-0" : "mt-1 rounded-xl border border-violet-200 bg-violet-50/80 p-2.5"}
       data-testid="private-session-panel"
       data-session-id={sessionId}
       data-current-role={currentUserRole}
     >
-      <div className="flex flex-wrap items-center gap-2" data-testid="private-session-control-bar">
-        <span data-testid="private-session-active-badge" className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">
-          {currentUserRole === "viewer" ? "Yayıncı ile özel görüşmedesin" : `Özel görüşme aktif: ${displayOtherUserName}`}
+      <div className="flex flex-wrap items-center gap-1.5" data-testid="private-session-control-bar">
+        <span
+          data-testid="private-session-active-badge"
+          className="rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-700"
+        >
+          Özel görüşme
         </span>
-        <span data-testid="private-session-rate-badge" className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-          Tarife aktif
+        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700">{displayOtherUserName}</span>
+        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700" data-testid="private-session-timer">
+          Geçen süre: {formatElapsed(elapsedSeconds)}
         </span>
-      </div>
-      <p className="mt-1 text-xs text-zinc-600" data-testid="private-session-participants">
-        Yayıncı: {streamerName || "Yayıncı"} • Üye: {viewerName || "Üye"}
-      </p>
+        <span
+          data-testid="private-session-rate-badge"
+          className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700"
+        >
+          {`${estimatedChargedMinutes} dk`}
+        </span>
+        {typeof estimatedRemainingMinutes === "number" ? (
+          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700" data-testid="private-session-remaining">
+            {currentUserRole === "viewer" ? `Kalan ${estimatedRemainingMinutes} dk` : `Üye kalan ${estimatedRemainingMinutes} dk`}
+          </span>
+        ) : null}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
         {currentUserRole === "viewer" ? (
           <>
             <button
               type="button"
               data-testid="private-session-open-camera"
               onClick={() => {
-                void requestMedia();
+                if (!stream) {
+                  void requestMedia();
+                  return;
+                }
+                toggleCamera();
               }}
-              className="rounded-lg bg-violet-500 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-400"
+              className="rounded-lg bg-violet-500 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-violet-400"
             >
-              Kameramı Aç
+              Kamera
             </button>
             <button
               type="button"
               data-testid="private-session-mic-toggle"
               onClick={toggleMic}
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700"
+              className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700"
             >
-              {isMicEnabled ? "Mikrofonu Kapat" : "Mikrofonu Aç"}
+              Mikrofon
             </button>
             <button
               type="button"
               data-testid="private-session-camera-toggle"
               onClick={toggleCamera}
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700"
+              className="hidden"
+              aria-hidden
             >
-              {isCameraEnabled ? "Kamerayı Kapat" : "Kamerayı Aç"}
+              {isCameraEnabled ? "Kamera Kapat" : "Kamera Ac"}
             </button>
           </>
         ) : null}
@@ -220,17 +286,18 @@ export default function PrivateRoomSessionPanel({
           <button
             type="button"
             data-testid="private-webrtc-start-button"
-            disabled={
-              webrtc.connectionState === "creating" ||
-              webrtc.connectionState === "connecting" ||
-              webrtc.connectionState === "connected"
-            }
-            className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+            data-connection-state={webrtc.connectionState}
+            disabled={webrtc.connectionState === "creating" || webrtc.connectionState === "connecting"}
+            className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 disabled:opacity-60"
             onClick={() => {
+              if (webrtc.connectionState === "connected") {
+                webrtc.closeConnection();
+                return;
+              }
               void webrtc.startConnection();
             }}
           >
-            Bağlantıyı Başlat
+            {webrtc.connectionState === "connected" ? "Bağlantıyı Kapat" : "Bağlan"}
           </button>
         ) : null}
 
@@ -241,81 +308,51 @@ export default function PrivateRoomSessionPanel({
             void onEnd();
           }}
           disabled={isEnding || isAutoEnding}
-          className="rounded-lg bg-rose-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+          className="rounded-lg bg-rose-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-60"
         >
-          {isEnding ? "Bitiriliyor..." : "Özel Görüşmeyi Bitir"}
+          {isEnding ? "Bitiriliyor..." : "Özeli Bitir"}
         </button>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {stream ? (
-          <div className="w-28 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950">
-            <video
-              ref={localVideoRef}
-              muted
-              autoPlay
-              playsInline
-              className="aspect-video w-full object-cover"
-              data-testid="private-session-local-preview"
-            />
-          </div>
-        ) : null}
-        {webrtc.remoteStream ? (
-          <div className="w-28 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950">
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              className="aspect-video w-full object-cover"
-              data-testid="private-session-remote-preview"
-            />
-          </div>
-        ) : null}
-      </div>
-
-      <p className="mt-3 text-xs text-zinc-600" data-testid="private-webrtc-state">
-        WebRTC: {mapWebRtcConnectionLabel(webrtc.connectionState)}
+      <p className="sr-only" data-testid="private-session-participants">
+        Yayıncı: {streamerName || "Yayıncı"} • Üye: {viewerName || "Üye"}
       </p>
+
+      <span className="sr-only" data-testid="private-webrtc-state" data-connection-state={webrtc.connectionState}>
+        {mapWebRtcConnectionLabel(webrtc.connectionState)}
+      </span>
+
       {webrtc.errorMessage ? (
-        <p className="mt-1 text-xs font-semibold text-rose-700" data-testid="private-webrtc-error">
+        <p className="mt-1.5 text-xs font-semibold text-rose-700" data-testid="private-webrtc-error">
           {webrtc.errorMessage}
         </p>
       ) : null}
       {signalingErrorText ? (
-        <p className="mt-1 text-xs font-semibold text-amber-700" data-testid="private-signal-error">
+        <p className="mt-1.5 text-xs font-semibold text-amber-700" data-testid="private-signal-error">
           {signalingErrorText}
         </p>
       ) : null}
-
-      <p className="mt-3 text-sm font-semibold text-zinc-800" data-testid="private-session-timer">
-        Geçen süre: {formatElapsed(elapsedSeconds)}
-      </p>
-      {typeof estimatedRemainingMinutes === "number" ? (
-        <p className="mt-1 text-sm font-semibold text-zinc-800" data-testid="private-session-remaining">
-          {currentUserRole === "viewer" ? "Yaklaşık kalan süre" : "Üyenin yaklaşık kalan süresi"}: {estimatedRemainingMinutes} dk
-        </p>
-      ) : null}
-      <p className="mt-1 text-xs text-zinc-600">Bu oturum en az 1 dk olarak ücretlendirilir.</p>
       {showLowBalanceWarning ? (
-        <p className="mt-1 text-xs font-medium text-amber-700" data-testid="private-session-low-balance-warning">
+        <p className="mt-1.5 text-[11px] font-medium text-amber-700" data-testid="private-session-low-balance-warning">
           Dakika bakiyeniz azalıyor. Özel görüşme kısa süre içinde kapanabilir.
         </p>
       ) : null}
       {isAutoEnding ? (
-        <p className="mt-1 text-xs font-medium text-rose-700" data-testid="private-session-auto-ending">
+        <p className="mt-1.5 text-xs font-medium text-rose-700" data-testid="private-session-auto-ending">
           {autoEndReason}
         </p>
       ) : null}
       {resultText ? (
-        <p className="mt-2 text-xs font-semibold text-violet-700" data-testid="private-session-result">
+        <p className="mt-1.5 text-xs font-semibold text-violet-700" data-testid="private-session-result">
           {resultText}
         </p>
       ) : null}
       {errorText ? (
-        <p className="mt-2 text-xs font-semibold text-rose-700" data-testid="private-session-error">
+        <p className="mt-1.5 text-xs font-semibold text-rose-700" data-testid="private-session-error">
           {errorText}
         </p>
       ) : null}
     </section>
+  </>
   );
 }
