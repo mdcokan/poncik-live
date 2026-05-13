@@ -30,6 +30,7 @@ type PrivateRoomSessionPanelProps = {
   currentUserId?: string | null;
   stageOverlayRef?: RefObject<HTMLElement | null>;
   compact?: boolean;
+  pricePerMinute?: number | null;
 };
 
 function formatElapsed(seconds: number) {
@@ -101,6 +102,7 @@ export default function PrivateRoomSessionPanel({
   currentUserId = null,
   stageOverlayRef,
   compact = false,
+  pricePerMinute = null,
 }: PrivateRoomSessionPanelProps) {
   const { stream, isCameraEnabled, isMicEnabled, requestMedia, toggleCamera, toggleMic } = useLocalMediaPreview();
   const autoEndTriggeredRef = useRef(false);
@@ -214,6 +216,102 @@ export default function PrivateRoomSessionPanel({
       />
     ) : null;
 
+  const safePricePerMinute = typeof pricePerMinute === "number" && pricePerMinute > 0
+    ? Math.max(1, Math.floor(pricePerMinute))
+    : 1;
+  const compactSummaryRate = `${safePricePerMinute} dk/dk`;
+  const compactRemainingText =
+    typeof estimatedRemainingMinutes === "number"
+      ? currentUserRole === "viewer"
+        ? `Kalan ${estimatedRemainingMinutes} dk`
+        : `Üye ${estimatedRemainingMinutes} dk`
+      : null;
+
+  const viewerControls = currentUserRole === "viewer" ? (
+    <>
+      <button
+        type="button"
+        data-testid="private-session-open-camera"
+        onClick={() => {
+          if (!stream) {
+            void requestMedia();
+            return;
+          }
+          toggleCamera();
+        }}
+        className={
+          compact
+            ? "inline-flex h-8 items-center rounded-lg bg-violet-500 px-2.5 text-[11px] font-semibold text-white hover:bg-violet-400"
+            : "rounded-lg bg-violet-500 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-violet-400"
+        }
+      >
+        Kamera
+      </button>
+      <button
+        type="button"
+        data-testid="private-session-mic-toggle"
+        onClick={toggleMic}
+        className={
+          compact
+            ? "inline-flex h-8 items-center rounded-lg border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-zinc-700"
+            : "rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700"
+        }
+      >
+        Mikrofon
+      </button>
+      <button
+        type="button"
+        data-testid="private-session-camera-toggle"
+        onClick={toggleCamera}
+        className="hidden"
+        aria-hidden
+      >
+        {isCameraEnabled ? "Kamera Kapat" : "Kamera Ac"}
+      </button>
+    </>
+  ) : null;
+
+  const webRtcButton = enableWebRtc && onSendSignal ? (
+    <button
+      type="button"
+      data-testid="private-webrtc-start-button"
+      data-connection-state={webrtc.connectionState}
+      disabled={webrtc.connectionState === "creating" || webrtc.connectionState === "connecting"}
+      className={
+        compact
+          ? "inline-flex h-8 items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-semibold text-emerald-700 disabled:opacity-60"
+          : "rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 disabled:opacity-60"
+      }
+      onClick={() => {
+        if (webrtc.connectionState === "connected") {
+          webrtc.closeConnection();
+          return;
+        }
+        void webrtc.startConnection();
+      }}
+    >
+      {webrtc.connectionState === "connected" ? "Kapat" : "Bağlan"}
+    </button>
+  ) : null;
+
+  const endButton = (
+    <button
+      type="button"
+      data-testid="private-session-end-button"
+      onClick={() => {
+        void onEnd();
+      }}
+      disabled={isEnding || isAutoEnding}
+      className={
+        compact
+          ? "inline-flex h-8 items-center rounded-lg bg-rose-500 px-2.5 text-[11px] font-semibold text-white disabled:opacity-60"
+          : "rounded-lg bg-rose-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-60"
+      }
+    >
+      {isEnding ? "..." : compact ? "Bitir" : "Özeli Bitir"}
+    </button>
+  );
+
   return (
   <>
     {stagePortalTarget && stagePipOverlay ? createPortal(stagePipOverlay, stagePortalTarget) : null}
@@ -223,96 +321,62 @@ export default function PrivateRoomSessionPanel({
       data-session-id={sessionId}
       data-current-role={currentUserRole}
     >
-      <div className="flex flex-wrap items-center gap-1.5" data-testid="private-session-control-bar">
-        <span
-          data-testid="private-session-active-badge"
-          className="rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-700"
+      {compact ? (
+        <div
+          className="flex items-center gap-1.5 overflow-x-auto"
+          data-testid="private-session-control-bar"
         >
-          Özel görüşme
-        </span>
-        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700">{displayOtherUserName}</span>
-        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700" data-testid="private-session-timer">
-          Geçen süre: {formatElapsed(elapsedSeconds)}
-        </span>
-        <span
-          data-testid="private-session-rate-badge"
-          className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700"
-        >
-          {`${estimatedChargedMinutes} dk`}
-        </span>
-        {typeof estimatedRemainingMinutes === "number" ? (
-          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700" data-testid="private-session-remaining">
-            {currentUserRole === "viewer" ? `Kalan ${estimatedRemainingMinutes} dk` : `Üye kalan ${estimatedRemainingMinutes} dk`}
-          </span>
-        ) : null}
-
-        {currentUserRole === "viewer" ? (
-          <>
-            <button
-              type="button"
-              data-testid="private-session-open-camera"
-              onClick={() => {
-                if (!stream) {
-                  void requestMedia();
-                  return;
-                }
-                toggleCamera();
-              }}
-              className="rounded-lg bg-violet-500 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-violet-400"
-            >
-              Kamera
-            </button>
-            <button
-              type="button"
-              data-testid="private-session-mic-toggle"
-              onClick={toggleMic}
-              className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700"
-            >
-              Mikrofon
-            </button>
-            <button
-              type="button"
-              data-testid="private-session-camera-toggle"
-              onClick={toggleCamera}
-              className="hidden"
-              aria-hidden
-            >
-              {isCameraEnabled ? "Kamera Kapat" : "Kamera Ac"}
-            </button>
-          </>
-        ) : null}
-
-        {enableWebRtc && onSendSignal ? (
-          <button
-            type="button"
-            data-testid="private-webrtc-start-button"
-            data-connection-state={webrtc.connectionState}
-            disabled={webrtc.connectionState === "creating" || webrtc.connectionState === "connecting"}
-            className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 disabled:opacity-60"
-            onClick={() => {
-              if (webrtc.connectionState === "connected") {
-                webrtc.closeConnection();
-                return;
-              }
-              void webrtc.startConnection();
-            }}
+          <div className="flex min-w-0 items-center gap-1 truncate text-[11px] font-semibold text-violet-800" data-testid="private-session-compact-summary">
+            <span data-testid="private-session-active-badge" className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">
+              Özel
+            </span>
+            <span>·</span>
+            <span data-testid="private-session-timer">{formatElapsed(elapsedSeconds)}</span>
+            <span>·</span>
+            <span data-testid="private-session-rate-badge">{compactSummaryRate}</span>
+            {compactRemainingText ? (
+              <>
+                <span>·</span>
+                <span data-testid="private-session-remaining" className="whitespace-nowrap">
+                  {compactRemainingText}
+                </span>
+              </>
+            ) : null}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {viewerControls}
+            {webRtcButton}
+            {endButton}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="private-session-control-bar">
+          <span
+            data-testid="private-session-active-badge"
+            className="rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-700"
           >
-            {webrtc.connectionState === "connected" ? "Bağlantıyı Kapat" : "Bağlan"}
-          </button>
-        ) : null}
-
-        <button
-          type="button"
-          data-testid="private-session-end-button"
-          onClick={() => {
-            void onEnd();
-          }}
-          disabled={isEnding || isAutoEnding}
-          className="rounded-lg bg-rose-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-60"
-        >
-          {isEnding ? "Bitiriliyor..." : "Özeli Bitir"}
-        </button>
-      </div>
+            Özel görüşme
+          </span>
+          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700">{displayOtherUserName}</span>
+          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700" data-testid="private-session-timer">
+            Geçen süre: {formatElapsed(elapsedSeconds)}
+          </span>
+          <span
+            data-testid="private-session-rate-badge"
+            className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700"
+          >
+            {`${estimatedChargedMinutes} dk`}
+          </span>
+          {typeof estimatedRemainingMinutes === "number" ? (
+            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700" data-testid="private-session-remaining">
+              {currentUserRole === "viewer" ? `Kalan ${estimatedRemainingMinutes} dk` : `Üye kalan ${estimatedRemainingMinutes} dk`}
+            </span>
+          ) : null}
+          {viewerControls}
+          {webRtcButton}
+          {endButton}
+        </div>
+      )}
 
       <p className="sr-only" data-testid="private-session-participants">
         Yayıncı: {streamerName || "Yayıncı"} • Üye: {viewerName || "Üye"}
@@ -342,12 +406,12 @@ export default function PrivateRoomSessionPanel({
           {autoEndReason}
         </p>
       ) : null}
-      {resultText ? (
+      {resultText && !compact ? (
         <p className="mt-1.5 text-xs font-semibold text-violet-700" data-testid="private-session-result">
           {resultText}
         </p>
       ) : null}
-      {errorText ? (
+      {errorText && !compact ? (
         <p className="mt-1.5 text-xs font-semibold text-rose-700" data-testid="private-session-error">
           {errorText}
         </p>

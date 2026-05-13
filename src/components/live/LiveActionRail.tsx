@@ -25,7 +25,7 @@ const toneClasses: Record<NonNullable<LiveActionRailItem["tone"]>, string> = {
 export default function LiveActionRail({ items, testId = "room-mobile-action-rail", className = "" }: LiveActionRailProps) {
   return (
     <div
-      className={`pointer-events-none absolute right-2 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-2 lg:hidden ${className}`}
+      className={`pointer-events-none absolute right-1.5 top-1/2 z-30 flex max-h-[calc(100%-1rem)] -translate-y-1/2 flex-col gap-1 overflow-hidden lg:hidden ${className}`}
       data-testid={testId}
     >
       {items.map((item) => (
@@ -35,11 +35,11 @@ export default function LiveActionRail({ items, testId = "room-mobile-action-rai
           data-testid={item.testId}
           disabled={item.disabled}
           onClick={item.onClick}
-          className={`pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border text-[9px] font-black leading-tight shadow-lg backdrop-blur-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${toneClasses[item.tone ?? "default"]}`}
+          className={`pointer-events-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full border text-[9px] font-black leading-none shadow-lg backdrop-blur-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${toneClasses[item.tone ?? "default"]}`}
           aria-label={item.label}
           title={item.label}
         >
-          <span className="max-w-[2.5rem] text-center">{item.label}</span>
+          <span className="max-w-[2.25rem] truncate text-center">{item.label}</span>
         </button>
       ))}
     </div>

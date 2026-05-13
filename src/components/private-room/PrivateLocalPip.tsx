@@ -38,12 +38,16 @@ export default function PrivateLocalPip({
   }
 
   const sizeClass = expanded
-    ? "w-[80vw] max-w-[80vw] sm:w-72 sm:max-w-[min(18rem,80vw)]"
+    ? "w-[min(70vw,18rem)] max-w-[70vw] max-h-[30vh] sm:w-72"
     : "w-28 sm:w-40 md:w-48";
 
   return (
     <div
-      className={`pointer-events-auto absolute bottom-3 right-3 z-30 overflow-hidden rounded-xl border border-white/20 bg-zinc-950 shadow-lg ${sizeClass}`}
+      className={`pointer-events-auto absolute z-30 overflow-hidden rounded-xl border border-white/20 bg-zinc-950 shadow-lg ${sizeClass}`}
+      style={{
+        right: "max(0.75rem, env(safe-area-inset-right))",
+        bottom: "max(0.75rem, env(safe-area-inset-bottom))",
+      }}
       data-testid={testId}
     >
       <div className="relative aspect-video w-full overflow-hidden">

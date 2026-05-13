@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchRoomPresenceFromApi,
   removeRoomPresence,
@@ -20,6 +20,11 @@ import PrivateSessionEndedSummary, {
   type PrivateSessionCloseSummary,
 } from "@/components/private-room/PrivateSessionEndedSummary";
 import { DirectMessagesPanel } from "@/components/dm/DirectMessagesPanel";
+import LiveActionRail from "@/components/live/LiveActionRail";
+import LiveBottomSheet from "@/components/live/LiveBottomSheet";
+import LiveMobileMenu, { type LiveMobileMenuItem } from "@/components/live/LiveMobileMenu";
+import LiveMobileShell from "@/components/live/LiveMobileShell";
+import StudioCameraControls from "@/components/studio/StudioCameraControls";
 import { usePrivateRoomSignaling } from "@/hooks/use-private-room-signaling";
 
 type RoomStatus = "offline" | "live" | "private_busy" | "private";
@@ -245,6 +250,8 @@ export default function StudioPage() {
   const privateRequestsFetchInFlightRef = useRef(false);
   const stageOverlayRef = useRef<HTMLDivElement | null>(null);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [isLargeScreen, setIsLargeScreen] = useState(false);
+  const [mobileSheet, setMobileSheet] = useState<"chat" | "participants" | "gift" | null>(null);
 
   const resetStudioLiveState = useCallback((endMessage: string) => {
     setActiveRoom(null);
@@ -819,6 +826,18 @@ export default function StudioPage() {
       setChatBody("");
     }
   }, [isLive]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1024px)");
+    const sync = () => {
+      setIsLargeScreen(query.matches);
+    };
+    sync();
+    query.addEventListener("change", sync);
+    return () => {
+      query.removeEventListener("change", sync);
+    };
+  }, []);
 
   useEffect(() => {
     if (!activeRoom?.id || activeRoom.status !== "live") {
@@ -1451,7 +1470,7 @@ export default function StudioPage() {
   }, [activePrivateSession?.sessionId, displayName, chatIdentity.displayName]);
 
   useEffect(() => {
-    if (activeTab !== "gift" || hasGiftCatalogLoaded) {
+    if ((activeTab !== "gift" && mobileSheet !== "gift") || hasGiftCatalogLoaded) {
       return;
     }
 
@@ -1489,7 +1508,7 @@ export default function StudioPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, hasGiftCatalogLoaded]);
+  }, [activeTab, hasGiftCatalogLoaded, mobileSheet]);
 
   useEffect(() => {
     if (!activeRoom?.id || activeRoom.status !== "live") {
@@ -1570,29 +1589,115 @@ export default function StudioPage() {
   }, [giftEvents, isNearBottom]);
 
   useEffect(() => {
+    const effectiveTab = mobileSheet ?? activeTab;
     const nextContainer =
-      activeTab === "chat"
+      effectiveTab === "chat"
         ? chatScrollRef.current
-        : activeTab === "gift"
+        : effectiveTab === "gift"
           ? giftsScrollRef.current
           : participantsScrollRef.current;
     if (!nextContainer) {
       return;
     }
     requestAnimationFrame(() => {
-      nextContainer.scrollTop = tabScrollPositionsRef.current[activeTab];
-      if (activeTab === "chat") {
+      nextContainer.scrollTop = tabScrollPositionsRef.current[effectiveTab];
+      if (effectiveTab === "chat") {
         shouldAutoScrollChatRef.current = isNearBottom(nextContainer);
         if (shouldAutoScrollChatRef.current) {
           setUnreadChatCount(0);
         }
       }
     });
-  }, [activeTab, isNearBottom]);
+  }, [activeTab, isNearBottom, mobileSheet]);
+
+  const studioMobileMenuItems = useMemo<LiveMobileMenuItem[]>(
+    () => [
+      { id: "panel", label: "Yayıncı Paneli", href: "/streamer", testId: "mobile-live-menu-item-panel" },
+      { id: "messages", label: "Mesajlarım", href: "/streamer", testId: "mobile-live-menu-item-messages" },
+      { id: "private-earnings", label: "Özel Oda Kazançlarım", href: "/streamer" },
+      { id: "summary", label: "Yayın Özeti", href: "/streamer" },
+      { id: "profile", label: "Profil Güncelle", href: "/profile" },
+      { id: "blocked", label: "Engellediklerim", href: "/streamer" },
+      { id: "announcements", label: "Duyurular", href: "/streamer" },
+    ],
+    [],
+  );
+  const studioMobileChatPreview = roomMessages.slice(-3);
+  const studioHasMobilePip = Boolean(activePrivateSession);
+
+  const mobileActionRailItems = [
+    {
+      id: "stop",
+      label: "Bitir",
+      testId: "studio-stop-live-button",
+      disabled: isBusy || !isStreamer || isRestricted,
+      onClick: () => {
+        void handleStopLive();
+      },
+      tone: "danger" as const,
+    },
+    {
+      id: "dm",
+      label: "Mesaj",
+      testId: "studio-dm-open-button",
+      onClick: () => setShowDmOverlay(true),
+      tone: "accent" as const,
+    },
+    {
+      id: "chat",
+      label: "Sohbet",
+      testId: "studio-mobile-chat-sheet-button",
+      onClick: () => {
+        setActiveTab("chat");
+        setMobileSheet("chat");
+      },
+      tone: "default" as const,
+    },
+    {
+      id: "gift",
+      label: "Hediye",
+      testId: "studio-mobile-gift-sheet-button",
+      onClick: () => {
+        setActiveTab("gift");
+        setMobileSheet("gift");
+      },
+      tone: "default" as const,
+    },
+    {
+      id: "participants",
+      label: "Odada",
+      testId: "studio-mobile-participants-sheet-button",
+      onClick: () => {
+        setActiveTab("participants");
+        setMobileSheet("participants");
+      },
+      tone: "default" as const,
+    },
+    {
+      id: "camera",
+      label: "Kamera",
+      testId: "studio-mobile-camera-settings-button",
+      onClick: () => setShowLiveSettings((prev) => !prev),
+      tone: "default" as const,
+    },
+    {
+      id: "mic",
+      label: "Mik",
+      testId: "studio-mobile-mic-settings-button",
+      onClick: () => setShowLiveSettings((prev) => !prev),
+      tone: "default" as const,
+    },
+    {
+      id: "menu",
+      label: "Menü",
+      onClick: () => setMenuOpen(true),
+      tone: "default" as const,
+    },
+  ];
 
   return (
-    <main className="min-h-screen bg-[#eef7fb] text-zinc-900 lg:h-[100dvh] lg:overflow-hidden">
-      <header className="relative z-[100] h-16 border-b border-pink-100/80 bg-white/80 backdrop-blur">
+    <main className="min-h-screen overflow-x-hidden bg-[#eef7fb] text-zinc-900 lg:h-[100dvh] lg:overflow-hidden">
+      <header className="relative z-[100] hidden h-16 border-b border-pink-100/80 bg-white/80 backdrop-blur lg:block">
         <div className="mx-auto flex h-full max-w-[1800px] items-center justify-between px-4 sm:px-6">
           <div className="relative z-[110] flex items-center gap-3 overflow-visible">
             <button
@@ -1662,8 +1767,39 @@ export default function StudioPage() {
         </div>
       </header>
 
-      <section className="mx-auto grid min-h-[calc(100vh-64px)] max-w-[1800px] grid-cols-1 gap-2 p-2 lg:h-[calc(100dvh-64px)] lg:min-h-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(420px,1fr)] lg:overflow-hidden xl:grid-cols-[minmax(0,1.5fr)_minmax(440px,1fr)]">
-        <div className="flex min-h-0 flex-col rounded-3xl border border-white/70 bg-white/60 p-2 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm lg:overflow-hidden">
+      <section className="mx-auto grid h-[100dvh] max-w-[1800px] grid-cols-1 gap-2 overflow-hidden p-2 lg:h-[calc(100dvh-64px)] lg:min-h-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(420px,1fr)] lg:overflow-hidden xl:grid-cols-[minmax(0,1.5fr)_minmax(440px,1fr)]">
+        <LiveMobileShell
+          testId="studio-mobile-shell"
+          header={
+            !isLargeScreen ? (
+              <div className="relative flex h-10 shrink-0 items-center justify-between border-b border-pink-100/80 bg-white/90 px-3 backdrop-blur">
+                <div className="flex min-w-0 items-center gap-2">
+                  <LiveMobileMenu
+                    open={menuOpen}
+                    onOpen={() => setMenuOpen(true)}
+                    onClose={() => setMenuOpen(false)}
+                    title="Menü"
+                    items={studioMobileMenuItems}
+                    onLogout={() => {
+                      void handleSignOut();
+                    }}
+                  />
+                  <Link href="/" className="truncate text-[13px] font-black tracking-tight text-zinc-900">
+                    Poncik<span className="text-pink-400">Live</span>
+                  </Link>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    isLive ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-600"
+                  }`}
+                >
+                  {isLive ? "Canlı" : "Hazır"}
+                </span>
+              </div>
+            ) : undefined
+          }
+          stage={
+            <div className="flex h-full min-h-0 flex-col lg:rounded-3xl lg:border lg:border-white/70 lg:bg-white/60 lg:p-2 lg:shadow-[0_10px_30px_rgba(15,23,42,0.08)] lg:backdrop-blur-sm lg:overflow-hidden">
           {!loadingUser && !isStreamer ? (
             <div className="flex flex-1 items-center justify-center p-3">
               <div className="w-full max-w-xl rounded-3xl border border-pink-100 bg-white p-8 text-center shadow-lg">
@@ -1680,7 +1816,7 @@ export default function StudioPage() {
             </div>
           ) : (
             <>
-              <div className="mb-2 flex min-h-8 shrink-0 items-center gap-2 overflow-hidden rounded-xl border border-pink-100 bg-white px-2.5 text-[11px]">
+              <div className="mb-2 hidden min-h-8 shrink-0 items-center gap-2 overflow-hidden rounded-xl border border-pink-100 bg-white px-2.5 text-[11px] lg:flex">
                 <span className="rounded-full bg-yellow-200 px-2 py-0.5 font-bold text-zinc-800">Genel</span>
                 <span className={`rounded-full px-2 py-0.5 font-bold ${isBroadcastActive ? "bg-rose-100 text-rose-700" : "bg-zinc-100 text-zinc-600"}`}>
                   {isBroadcastActive ? "Canli" : "Hazir"}
@@ -1694,9 +1830,12 @@ export default function StudioPage() {
               </div>
 
               <div
-                className="relative flex min-h-[260px] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-zinc-800/70 bg-zinc-950 p-2 sm:p-3"
+                className="relative flex min-h-[52dvh] flex-1 items-center justify-center overflow-hidden rounded-2xl border border-zinc-800/70 bg-zinc-950 p-1.5 sm:rounded-3xl sm:p-3 lg:min-h-[260px]"
                 data-testid="studio-live-stage"
               >
+                {isBroadcastActive && !isLargeScreen ? (
+                  <LiveActionRail items={mobileActionRailItems} testId="studio-mobile-action-rail" />
+                ) : null}
                 <div className="w-full max-w-[1100px]">
                   <div
                     ref={stageOverlayRef}
@@ -1728,6 +1867,37 @@ export default function StudioPage() {
                         {giftOverlayText}
                       </div>
                     ) : null}
+                    {isLive && !isLargeScreen && mobileSheet === null && studioMobileChatPreview.length > 0 ? (
+                      <div
+                        className={`pointer-events-none absolute z-20 flex flex-col gap-1 ${
+                          studioHasMobilePip ? "bottom-16 left-3 right-[8.5rem]" : "bottom-16 left-3 right-16"
+                        }`}
+                        data-testid="mobile-stage-chat-preview"
+                        data-pip-active={studioHasMobilePip ? "true" : "false"}
+                      >
+                        {studioMobileChatPreview.map((roomMessage) => (
+                          <article
+                            key={roomMessage.id}
+                            data-testid="mobile-stage-chat-preview-item"
+                            className="max-w-full overflow-hidden rounded-xl bg-black/60 px-2 py-1 text-[11px] leading-tight text-white shadow-sm backdrop-blur-sm"
+                          >
+                            <span className="font-bold text-pink-200">{roomMessage.senderName}: </span>
+                            <span
+                              className="text-zinc-100"
+                              style={{
+                                display: "-webkit-box",
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: "vertical",
+                                overflow: "hidden",
+                                overflowWrap: "anywhere",
+                              }}
+                            >
+                              {roomMessage.body}
+                            </span>
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
 
                     {!isLive ? (
                       <div className="flex h-full items-center justify-center text-center">
@@ -1749,7 +1919,7 @@ export default function StudioPage() {
                 </div>
               </div>
               {isBroadcastActive ? (
-                <div className="my-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-100 bg-white px-2.5 py-1.5 shadow-sm">
+                <div className="my-2 hidden shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-100 bg-white px-2.5 py-1.5 shadow-sm lg:flex">
                   <button
                     type="button"
                     data-testid="studio-stop-live-button"
@@ -1778,13 +1948,26 @@ export default function StudioPage() {
                 </div>
               ) : null}
               {activePrivateSession ? (
-                <div className="my-1 shrink-0" data-testid="studio-private-inline-bar">
+                <div
+                  className={
+                    isLargeScreen
+                      ? "my-1 shrink-0"
+                      : "my-1 shrink-0 rounded-xl border border-violet-200 bg-violet-50/80 px-2 py-1.5"
+                  }
+                  data-testid="studio-private-inline-bar"
+                >
                   <button
                     type="button"
                     data-testid="studio-stop-live-private-button"
                     onClick={handleStopLive}
                     disabled={isBusy || !isStreamer || isRestricted}
-                    className="mb-1 rounded-lg bg-rose-500 px-2.5 py-1 text-[11px] font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    className={
+                      isLargeScreen
+                        ? "mb-1 rounded-lg bg-rose-500 px-2.5 py-1 text-[11px] font-black text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                        : "sr-only"
+                    }
+                    aria-hidden={isLargeScreen ? undefined : true}
+                    tabIndex={isLargeScreen ? undefined : -1}
                   >
                     Yayini Bitir
                   </button>
@@ -1806,71 +1989,40 @@ export default function StudioPage() {
                     lastSignal={privateRoomSignaling.lastSignal}
                     signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
                     currentUserId={ownerId}
+                    compact={!isLargeScreen}
+                    pricePerMinute={activePrivateSession.pricePerMinute ?? 1}
                   />
                 </div>
               ) : null}
 
               {!isLive ? (
-                <div className="my-2 shrink-0 rounded-3xl border border-pink-100 bg-white p-3 shadow-sm lg:p-4">
-                  <div className="mx-auto max-w-5xl">
-                    <h2 className="text-base font-black text-zinc-900">Kamera Ayarları</h2>
-                    <div className="mt-3 grid gap-2 lg:grid-cols-2">
-                      <label className="grid gap-2 text-sm font-semibold text-zinc-700">
-                        Kamera
-                        <select className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-zinc-900 outline-none transition focus:border-pink-400">
-                          <option>Kamera seçiniz</option>
-                        </select>
-                      </label>
-                      <label className="grid gap-2 text-sm font-semibold text-zinc-700">
-                        Mikrofon
-                        <select className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-zinc-900 outline-none transition focus:border-pink-400">
-                          <option>Mikrofonsuz devam et</option>
-                        </select>
-                      </label>
-                    </div>
-
-                    <div className="mt-2 grid gap-2 text-sm text-zinc-700">
-                      <label className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          checked={mutedStart}
-                          onChange={(event) => setMutedStart(event.target.checked)}
-                          className="h-4 w-4 accent-pink-500"
-                        />
-                        Yayını ses kapalı olarak başlat
-                      </label>
-                      <label className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          checked={mirrorVideo}
-                          onChange={(event) => setMirrorVideo(event.target.checked)}
-                          className="h-4 w-4 accent-pink-500"
-                        />
-                        Video aynalama aktif/pasif
-                      </label>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleStartLive}
+                <div className="my-2 shrink-0 rounded-2xl border border-pink-100 bg-white p-3 shadow-sm lg:rounded-3xl lg:p-4">
+                  <StudioCameraControls
+                    mutedStart={mutedStart}
+                    mirrorVideo={mirrorVideo}
+                    onMutedStartChange={setMutedStart}
+                    onMirrorVideoChange={setMirrorVideo}
+                    variant="prelive"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleStartLive}
                     disabled={isBusy || !isStreamer || isRestricted}
-                      className="mt-3 w-full rounded-2xl bg-emerald-400 px-5 py-2.5 text-sm font-black text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                    className="mt-3 hidden w-full rounded-2xl bg-emerald-400 px-5 py-2.5 text-sm font-black text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex lg:w-auto"
+                  >
+                    {status === "loading" ? "Yayın başlatılıyor..." : "YAYINA BAŞLA"}
+                  </button>
+                  {message ? (
+                    <div
+                      className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
+                        status === "success"
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                          : "border-rose-300 bg-rose-50 text-rose-700"
+                      }`}
                     >
-                      {status === "loading" ? "Yayın başlatılıyor..." : "YAYINA BAŞLA"}
-                    </button>
-
-                    {message ? (
-                      <div
-                        className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
-                          status === "success"
-                            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                            : "border-rose-300 bg-rose-50 text-rose-700"
-                        }`}
-                      >
-                        {message}
-                      </div>
-                    ) : null}
-                  </div>
+                      {message}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -1886,45 +2038,21 @@ export default function StudioPage() {
                       Ayarları Gizle
                     </button>
                   </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <label className="grid gap-1 text-xs font-semibold text-zinc-700">
-                      Kamera
-                      <select className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-pink-400">
-                        <option>Kamera seçiniz</option>
-                      </select>
-                    </label>
-                    <label className="grid gap-1 text-xs font-semibold text-zinc-700">
-                      Mikrofon
-                      <select className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-pink-400">
-                        <option>Mikrofonsuz devam et</option>
-                      </select>
-                    </label>
-                  </div>
-                  <div className="mt-3 grid gap-2 text-xs text-zinc-700 sm:grid-cols-2">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={mutedStart}
-                        onChange={(event) => setMutedStart(event.target.checked)}
-                        className="h-4 w-4 accent-pink-500"
-                      />
-                      Yayını ses kapalı başlat
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={mirrorVideo}
-                        onChange={(event) => setMirrorVideo(event.target.checked)}
-                        className="h-4 w-4 accent-pink-500"
-                      />
-                      Video aynalama aktif/pasif
-                    </label>
+                  <div className="mt-3">
+                    <StudioCameraControls
+                      mutedStart={mutedStart}
+                      mirrorVideo={mirrorVideo}
+                      onMutedStartChange={setMutedStart}
+                      onMirrorVideoChange={setMirrorVideo}
+                      variant="live"
+                      compact
+                    />
                   </div>
                 </div>
               ) : null}
 
               <div
-                className="mt-2 grid shrink-0 grid-cols-2 gap-1.5 md:grid-cols-4 xl:grid-cols-7"
+                className="mt-2 hidden shrink-0 grid-cols-2 gap-1.5 md:grid-cols-4 xl:grid-cols-7 lg:grid"
                 data-testid="studio-primary-action-toolbar"
               >
                 <button className="rounded-xl bg-yellow-300 px-3 py-1.5 text-xs font-black text-zinc-800 transition hover:brightness-95">
@@ -1966,8 +2094,259 @@ export default function StudioPage() {
               </div>
             </>
           )}
-        </div>
+            </div>
+          }
+          footer={
+            !isLargeScreen && isStreamer && !loadingUser ? (
+              <div className="shrink-0 border-t border-pink-100 bg-white/95 p-1.5 backdrop-blur">
+                {!isLive ? (
+                  <button
+                    type="button"
+                    onClick={handleStartLive}
+                    disabled={isBusy || isRestricted}
+                    data-testid="studio-start-live-button"
+                    className="w-full rounded-2xl bg-emerald-400 px-5 py-3 text-base font-black text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {status === "loading" ? "Yayın başlatılıyor..." : "YAYINA BAŞLA"}
+                  </button>
+                ) : (
+                  <div className="space-y-1">
+                    {message ? (
+                      <p
+                        className={`text-center text-[11px] font-semibold ${
+                          status === "success" ? "text-emerald-700" : "text-rose-700"
+                        }`}
+                      >
+                        {message}
+                      </p>
+                    ) : null}
+                    <div className="flex items-center gap-1.5 rounded-full border border-pink-100 bg-zinc-100/90 px-2.5 py-1.5">
+                      <input
+                        data-testid="studio-room-chat-input"
+                        value={chatBody}
+                        maxLength={500}
+                        onChange={(event) => setChatBody(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void handleSendChatMessage();
+                          }
+                        }}
+                        disabled={!isLive || chatSending || isRestricted}
+                        placeholder="Mesajınızı yazınız..."
+                        className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-zinc-500"
+                      />
+                      <button
+                        type="button"
+                        data-testid="studio-room-chat-send-button"
+                        onClick={() => {
+                          void handleSendChatMessage();
+                        }}
+                        disabled={!isLive || chatSending || isRestricted || !chatBody.trim() || chatBody.trim().length > 500}
+                        className="inline-flex h-7 min-w-[44px] items-center justify-center rounded-full bg-pink-500 px-2 text-[11px] font-bold text-white shadow-sm disabled:bg-zinc-300 disabled:opacity-60"
+                      >
+                        {chatSending ? "..." : "Gonder"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : undefined
+          }
+          sheets={
+            !isLargeScreen ? (
+              <>
+                <LiveBottomSheet
+                  open={mobileSheet === "chat"}
+                  title="Sohbet"
+                  testId="studio-mobile-chat-sheet"
+                  onClose={() => setMobileSheet(null)}
+                >
+                  <div
+                    ref={chatScrollRef}
+                    onScroll={(event) => {
+                      const element = event.currentTarget;
+                      tabScrollPositionsRef.current.chat = element.scrollTop;
+                      const nextNearBottom = isNearBottom(element);
+                      shouldAutoScrollChatRef.current = nextNearBottom;
+                      if (nextNearBottom) {
+                        setUnreadChatCount(0);
+                      }
+                    }}
+                    className="px-4 py-4"
+                    data-testid="studio-tabpanel-chat"
+                  >
+                    <div data-testid="studio-room-chat-message-list">
+                      {!activePrivateSession && privateSessionResult ? (
+                        <PrivateSessionEndedSummary
+                          role="streamer"
+                          resultText={privateSessionResult}
+                          summary={privateSessionCloseSummary}
+                        />
+                      ) : null}
+                      {!activePrivateSession && privateSessionError ? (
+                        <p className="mb-3 text-xs font-semibold text-rose-700" data-testid="private-session-error">
+                          {privateSessionError}
+                        </p>
+                      ) : null}
+                      {roomMessages.length === 0 ? (
+                        <p className="text-sm text-zinc-500">Henuz sohbet mesaji yok.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {roomMessages.map((roomMessage) => (
+                            <article
+                              key={roomMessage.id}
+                              data-testid="studio-room-chat-message"
+                              className="rounded-2xl border border-pink-100/80 bg-white px-3 py-2.5 shadow-sm"
+                            >
+                              <div className="flex items-center justify-between gap-2 text-xs">
+                                <span className="font-bold text-pink-600">{roomMessage.senderName}</span>
+                                <span className="text-zinc-400">
+                                  {new Date(roomMessage.createdAt).toLocaleTimeString("tr-TR", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                </span>
+                              </div>
+                              <p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-700">{roomMessage.body}</p>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {unreadChatCount > 0 ? (
+                      <button
+                        type="button"
+                        data-testid="studio-chat-new-messages-indicator"
+                        onClick={() => {
+                          shouldAutoScrollChatRef.current = true;
+                          scrollMessagesToBottom();
+                          setUnreadChatCount(0);
+                        }}
+                        className="sticky bottom-3 mx-auto mt-3 block rounded-full bg-pink-500 px-3 py-1.5 text-xs font-bold text-white shadow"
+                      >
+                        Yeni mesajlar ({unreadChatCount})
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="border-t border-zinc-200 p-3">
+                    <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
+                      <input
+                        data-testid="room-chat-input"
+                        value={chatBody}
+                        maxLength={500}
+                        onChange={(event) => setChatBody(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void handleSendChatMessage();
+                          }
+                        }}
+                        disabled={!isLive || chatSending || isRestricted}
+                        placeholder="Mesajınızı buraya yazınız..."
+                        className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500"
+                      />
+                      <button
+                        type="button"
+                        data-testid="room-chat-send-button"
+                        onClick={() => {
+                          void handleSendChatMessage();
+                        }}
+                        disabled={!isLive || chatSending || isRestricted || !chatBody.trim() || chatBody.trim().length > 500}
+                        className="inline-flex rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm disabled:opacity-60"
+                      >
+                        {chatSending ? "..." : "Gonder"}
+                      </button>
+                    </div>
+                  </div>
+                </LiveBottomSheet>
+                <LiveBottomSheet
+                  open={mobileSheet === "participants"}
+                  title="Odadakiler"
+                  testId="studio-mobile-participants-sheet"
+                  onClose={() => setMobileSheet(null)}
+                >
+                  <div
+                    ref={participantsScrollRef}
+                    className="px-4 py-4"
+                    data-testid="studio-tabpanel-participants"
+                  >
+                    <section className="rounded-2xl border border-pink-100 bg-white p-3" data-testid="room-presence-panel">
+                      {presenceUsers.length === 0 ? (
+                        <p className="text-sm text-zinc-500">Aktif odada izleyici yok.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {presenceUsers.map((presenceUser) => (
+                            <article
+                              key={presenceUser.id}
+                              className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2"
+                              data-testid="room-presence-user"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="truncate text-sm font-semibold text-zinc-800">{presenceUser.displayName}</p>
+                                <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold text-zinc-700">
+                                  {getPresenceRoleLabel(presenceUser.role)}
+                                </span>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  </div>
+                </LiveBottomSheet>
+                <LiveBottomSheet
+                  open={mobileSheet === "gift"}
+                  title="Hediye"
+                  testId="studio-mobile-gift-sheet"
+                  onClose={() => setMobileSheet(null)}
+                >
+                  <div ref={giftsScrollRef} className="px-4 py-4" data-testid="studio-tabpanel-gifts">
+                    {isGiftCatalogLoading ? (
+                      <p className="text-sm text-zinc-500">Hediye katalogu yukleniyor...</p>
+                    ) : giftCatalog.length === 0 ? (
+                      <p className="text-sm text-zinc-500">Henuz aktif hediye yok.</p>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          {giftCatalog.map((giftItem) => (
+                            <article key={giftItem.id} className="rounded-2xl border border-pink-100 bg-white p-3 shadow-sm">
+                              <p className="text-2xl leading-none">{giftItem.emoji}</p>
+                              <p className="mt-2 text-sm font-black text-zinc-800">{giftItem.name}</p>
+                              <p className="mt-1 text-xs font-semibold text-pink-600">{getGiftMinuteCost(giftItem)} dk</p>
+                            </article>
+                          ))}
+                        </div>
+                        <section className="rounded-2xl border border-pink-100 bg-white p-3" data-testid="studio-gift-panel">
+                          <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Son hediyeler</p>
+                          {giftEvents.length === 0 ? (
+                            <p className="mt-2 text-sm text-zinc-500">Bu yayinda henuz hediye yok.</p>
+                          ) : (
+                            <div className="mt-3 space-y-2">
+                              {giftEvents.map((event) => (
+                                <article
+                                  key={event.id}
+                                  className="rounded-xl border border-zinc-100 bg-zinc-50/70 px-3 py-2"
+                                  data-testid="studio-gift-event"
+                                >
+                                  <p className="text-sm text-zinc-700">
+                                    <span className="font-semibold text-zinc-900">{event.senderName}</span> {event.giftEmoji} {event.giftName} gonderdi · {event.amount} dk
+                                  </p>
+                                </article>
+                              ))}
+                            </div>
+                          )}
+                        </section>
+                      </div>
+                    )}
+                  </div>
+                </LiveBottomSheet>
+              </>
+            ) : undefined
+          }
+        />
 
+        {isLargeScreen ? (
         <aside
           className="flex min-h-[420px] flex-col rounded-3xl border border-pink-100 bg-gradient-to-b from-white to-rose-50/35 text-zinc-900 shadow-[0_8px_20px_rgba(219,39,119,0.08)] lg:min-h-0 lg:h-full lg:min-w-[420px] lg:overflow-hidden"
           data-testid="studio-right-panel"
@@ -2270,11 +2649,12 @@ export default function StudioPage() {
             ) : null}
           </div>
         </aside>
+        ) : null}
       </section>
 
       {pendingPrivateRequest && !activePrivateSession && showPrivateRequestModal ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
-          <section className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" data-testid="studio-private-request-modal">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-3 sm:items-center sm:p-4">
+          <section className="max-h-[min(90dvh,720px)] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-xl sm:max-h-none" data-testid="studio-private-request-modal">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-black text-zinc-900">Uye {pendingPrivateRequest.viewerName} ozel gorusme istiyor</h2>

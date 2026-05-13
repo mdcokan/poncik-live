@@ -18,8 +18,11 @@ import {
 } from "@/lib/supabase-browser";
 import LiveActionRail from "@/components/live/LiveActionRail";
 import LiveBottomSheet from "@/components/live/LiveBottomSheet";
+import LiveMobileMenu, { type LiveMobileMenuItem } from "@/components/live/LiveMobileMenu";
 import LiveMobileShell from "@/components/live/LiveMobileShell";
 import LiveStage from "@/components/live/LiveStage";
+import LiveStreamNav from "@/components/live/LiveStreamNav";
+import { useRealtimeLiveRooms } from "@/hooks/use-realtime-live-rooms";
 import PrivateRoomSessionPanel from "@/components/private-room/PrivateRoomSessionPanel";
 import PrivateSessionEndedSummary, {
   type PrivateSessionCloseSummary,
@@ -272,7 +275,12 @@ export default function ViewerRoomClientPage() {
   const [hasFetchError, setHasFetchError] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "participants" | "gift">("chat");
   const [mobileSheet, setMobileSheet] = useState<"chat" | "participants" | "gift" | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isLargeScreen, setIsLargeScreen] = useState(false);
+  const { rooms: liveRooms } = useRealtimeLiveRooms({
+    initialRooms: [],
+    channelKey: `viewer-room-${roomId || "unknown"}`,
+  });
   const [messages, setMessages] = useState<RoomMessage[]>([]);
   const [chatBody, setChatBody] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -1737,6 +1745,43 @@ export default function ViewerRoomClientPage() {
     });
   }, [activeTab, isNearBottom]);
 
+  const liveRoomIds = useMemo(() => liveRooms.map((room) => room.id), [liveRooms]);
+  const currentLiveRoomIndex = useMemo(() => liveRoomIds.indexOf(roomId), [liveRoomIds, roomId]);
+  const canNavigateLiveRooms = liveRoomIds.length > 1 && currentLiveRoomIndex >= 0;
+  const isLiveRoomNavigationDisabled = Boolean(activePrivateSession?.sessionId);
+  const viewerMobileMenuItems = useMemo<LiveMobileMenuItem[]>(
+    () => [
+      { id: "panel", label: "Panel / Ana sayfa", href: "/member", testId: "mobile-live-menu-item-panel" },
+      { id: "messages", label: "Mesajlarım", href: "/member", testId: "mobile-live-menu-item-messages" },
+      { id: "packages", label: "Süre Satın Al", href: "/member" },
+      { id: "profile", label: "Profilim", href: "/profile" },
+      { id: "notifications", label: "Bildirimler", href: "/member" },
+      { id: "support", label: "Canlı Destek", href: "/member", testId: "mobile-live-menu-item-support" },
+    ],
+    [],
+  );
+
+  const handleViewerSignOut = useCallback(async () => {
+    const supabase = getSupabaseBrowserClient();
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }, []);
+
+  const handleNavigateLiveRoom = useCallback(
+    (direction: "previous" | "next") => {
+      if (!canNavigateLiveRooms || isLiveRoomNavigationDisabled || currentLiveRoomIndex < 0) {
+        return;
+      }
+      const targetIndex = direction === "previous" ? currentLiveRoomIndex - 1 : currentLiveRoomIndex + 1;
+      const targetRoomId = liveRoomIds[targetIndex];
+      if (!targetRoomId) {
+        return;
+      }
+      router.push(`/rooms/${targetRoomId}`);
+    },
+    [canNavigateLiveRooms, currentLiveRoomIndex, isLiveRoomNavigationDisabled, liveRoomIds, router],
+  );
+
   if (state.isLoading) {
     return (
       <main className="min-h-screen bg-cyan-100 px-4 py-6 text-slate-800 sm:px-6">
@@ -1781,7 +1826,8 @@ export default function ViewerRoomClientPage() {
   const streamerName = getStreamerName(state.room, state.ownerProfile);
   const chatValidationError =
     chatBody.trim().length > 500 ? "Mesaj en fazla 500 karakter olabilir." : chatBody.length > 0 && !chatBody.trim() ? "Bos mesaj gonderilemez." : null;
-  const mobileChatPreview = messages.slice(-4);
+  const mobileChatPreview = messages.slice(-3);
+  const hasMobilePip = Boolean(activePrivateSession);
   const privatePill = activePrivateSession ? (
     <span
       className="rounded-full bg-violet-500/85 px-2.5 py-0.5 text-[10px] font-semibold text-white"
@@ -1794,7 +1840,7 @@ export default function ViewerRoomClientPage() {
     {
       id: "support",
       label: "Destek",
-      onClick: () => {},
+      onClick: () => setMenuOpen(true),
       tone: "default" as const,
     },
     {
@@ -1841,7 +1887,19 @@ export default function ViewerRoomClientPage() {
       tone: "default" as const,
     },
     ...(activePrivateSession
-      ? []
+      ? [
+          {
+            id: "camera",
+            label: "Kamera",
+            onClick: () => {
+              const button = document.querySelector('[data-testid="private-session-open-camera"]');
+              if (button instanceof HTMLButtonElement) {
+                button.click();
+              }
+            },
+            tone: "default" as const,
+          },
+        ]
       : [
           {
             id: "private",
@@ -1882,10 +1940,22 @@ export default function ViewerRoomClientPage() {
       <LiveMobileShell
         header={!isLargeScreen ? (
           <div className="flex h-10 shrink-0 items-center justify-between border-b border-pink-100/80 bg-white/90 px-3 backdrop-blur">
-            <Link href="/" className="text-sm font-black tracking-tight text-zinc-900">
-              Poncik<span className="text-pink-400">Live</span>
-            </Link>
-            <Link href="/rooms" className="text-[11px] font-semibold text-zinc-600">
+            <div className="flex min-w-0 items-center gap-2">
+              <LiveMobileMenu
+                open={menuOpen}
+                onOpen={() => setMenuOpen(true)}
+                onClose={() => setMenuOpen(false)}
+                title="Menü"
+                items={viewerMobileMenuItems}
+                onLogout={() => {
+                  void handleViewerSignOut();
+                }}
+              />
+              <Link href="/" className="truncate text-[13px] font-black tracking-tight text-zinc-900">
+                Poncik<span className="text-pink-400">Live</span>
+              </Link>
+            </div>
+            <Link href="/rooms" className="shrink-0 rounded-full bg-pink-50 px-2 py-0.5 text-[10px] font-bold text-pink-600">
               Odalar
             </Link>
           </div>
@@ -1900,13 +1970,47 @@ export default function ViewerRoomClientPage() {
             privatePill={privatePill}
             className="h-full min-h-[58dvh] rounded-2xl"
             actionRail={!isLargeScreen ? <LiveActionRail items={mobileActionRailItems} /> : undefined}
+            streamNav={
+              <LiveStreamNav
+                hidden={liveRoomIds.length <= 1}
+                previousDisabled={isLiveRoomNavigationDisabled || currentLiveRoomIndex <= 0}
+                nextDisabled={
+                  isLiveRoomNavigationDisabled ||
+                  currentLiveRoomIndex < 0 ||
+                  currentLiveRoomIndex >= liveRoomIds.length - 1
+                }
+                onPrevious={() => handleNavigateLiveRoom("previous")}
+                onNext={() => handleNavigateLiveRoom("next")}
+              />
+            }
             chatOverlay={
               mobileSheet === null && mobileChatPreview.length > 0 ? (
-                <div className="pointer-events-none absolute bottom-16 left-3 right-16 z-20 space-y-1.5" data-testid="room-mobile-chat-overlay">
+                <div
+                  className={`pointer-events-none absolute z-20 flex flex-col gap-1 ${
+                    hasMobilePip ? "bottom-16 left-3 right-[8.5rem]" : "bottom-16 left-3 right-16"
+                  }`}
+                  data-testid="mobile-stage-chat-preview"
+                  data-pip-active={hasMobilePip ? "true" : "false"}
+                >
                   {mobileChatPreview.map((message) => (
-                    <article key={message.id} className="rounded-xl bg-black/55 px-2.5 py-1.5 text-[11px] text-white backdrop-blur-sm">
+                    <article
+                      key={message.id}
+                      data-testid="mobile-stage-chat-preview-item"
+                      className="max-w-full overflow-hidden rounded-xl bg-black/60 px-2 py-1 text-[11px] leading-tight text-white shadow-sm backdrop-blur-sm"
+                    >
                       <span className="font-bold text-pink-200">{message.senderName}: </span>
-                      <span className="text-zinc-100">{message.body}</span>
+                      <span
+                        className="text-zinc-100"
+                        style={{
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {message.body}
+                      </span>
                     </article>
                   ))}
                 </div>
@@ -2018,28 +2122,28 @@ export default function ViewerRoomClientPage() {
           </div>
         ) : undefined}
         footer={!isLargeScreen ? (
-          <div className="shrink-0 border-t border-pink-100 bg-white/95 p-2 backdrop-blur">
-            <p className="mb-2 text-[11px] font-semibold text-violet-700" data-testid="private-room-price-label">
+          <div className="shrink-0 border-t border-pink-100 bg-white/95 p-1.5 backdrop-blur">
+            <p className="sr-only" data-testid="private-room-price-label">
               Özel oda ücreti: {privateRoomPricePerMinute} dk / dakika
             </p>
-            {privateRequestFeedback ? (
+            {privateRequestFeedback && !activePrivateSession ? (
               /talebiniz kabul edildi|talebiniz reddedildi/i.test(privateRequestFeedback) ? (
-                <p className="mb-2 text-xs font-semibold text-violet-700" data-testid="private-request-status-message">
+                <p className="mb-1 text-[11px] font-semibold text-violet-700" data-testid="private-request-status-message">
                   {privateRequestFeedback}
                 </p>
               ) : (
-                <p className="mb-2 text-xs font-semibold text-violet-700" data-testid="private-request-feedback">
+                <p className="mb-1 text-[11px] font-semibold text-violet-700" data-testid="private-request-feedback">
                   {privateRequestFeedback}
                 </p>
               )
             ) : null}
             {roomPrivateBusyNoticeVisible ? (
-              <p className="mb-1 text-[11px] font-semibold text-amber-700" data-testid="room-private-busy-notice">
+              <p className="mb-0.5 text-[11px] font-semibold text-amber-700" data-testid="room-private-busy-notice">
                 Yayıncı özel görüşmeye geçti.
               </p>
             ) : null}
             {roomPrivateBusyNoticeVisible ? (
-              <p className="mb-2 text-[11px] text-zinc-600" data-testid="room-private-busy-redirecting">
+              <p className="mb-1 text-[11px] text-zinc-600" data-testid="room-private-busy-redirecting">
                 Anasayfaya yönlendiriliyorsunuz.
               </p>
             ) : null}
@@ -2047,12 +2151,12 @@ export default function ViewerRoomClientPage() {
               <PrivateSessionEndedSummary role="viewer" resultText={privateSessionResult} summary={privateSessionCloseSummary} />
             ) : null}
             {!activePrivateSession && privateSessionError ? (
-              <p className="mb-2 text-xs font-semibold text-rose-700" data-testid="private-session-error">
+              <p className="mb-1 text-[11px] font-semibold text-rose-700" data-testid="private-session-error">
                 {privateSessionError}
               </p>
             ) : null}
             {activePrivateSession ? (
-              <div className="mb-2" data-testid="viewer-private-inline-bar">
+              <div className="mb-1.5 rounded-xl border border-violet-200 bg-violet-50/80 px-2 py-1.5" data-testid="viewer-private-inline-bar">
                 <PrivateRoomSessionPanel
                   stageOverlayRef={stageOverlayRef}
                   sessionId={activePrivateSession.sessionId}
@@ -2075,10 +2179,11 @@ export default function ViewerRoomClientPage() {
                   signalingErrorText={privateRoomSignaling.lastSendError ?? privateRoomSignaling.lastRefreshError ?? null}
                   currentUserId={state.userId}
                   compact
+                  pricePerMinute={privateRoomPricePerMinute}
                 />
               </div>
             ) : null}
-            <div className="flex items-center gap-2 rounded-full border border-pink-100 bg-zinc-100/90 px-3 py-2.5">
+            <div className="flex items-center gap-1.5 rounded-full border border-pink-100 bg-zinc-100/90 px-2.5 py-1.5">
               <input
                 data-testid="room-chat-input"
                 value={chatBody}
@@ -2091,8 +2196,8 @@ export default function ViewerRoomClientPage() {
                   }
                 }}
                 disabled={isChatInputDisabled}
-                placeholder="Mesajinizi buraya yaziniz..."
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500"
+                placeholder="Mesajinizi yaziniz..."
+                className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-zinc-500"
               />
               <button
                 type="button"
@@ -2101,12 +2206,12 @@ export default function ViewerRoomClientPage() {
                   void handleSendMessage();
                 }}
                 disabled={isChatInputDisabled || Boolean(chatValidationError)}
-                className="inline-flex rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm disabled:opacity-60"
+                className="inline-flex h-7 min-w-[44px] items-center justify-center rounded-full bg-pink-500 px-2 text-[11px] font-bold text-white shadow-sm disabled:bg-zinc-300 disabled:opacity-60"
               >
                 {isSending ? "..." : "Gonder"}
               </button>
             </div>
-            {chatValidationError ? <p className="mt-1 text-xs text-rose-600">{chatValidationError}</p> : null}
+            {chatValidationError ? <p className="mt-1 text-[11px] text-rose-600">{chatValidationError}</p> : null}
           </div>
         ) : undefined}
         sheets={
