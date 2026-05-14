@@ -12,6 +12,7 @@ type LiveStageProps = {
   children?: ReactNode;
   actionRail?: ReactNode;
   chatOverlay?: ReactNode;
+  streamNav?: ReactNode;
   className?: string;
 };
 
@@ -25,6 +26,7 @@ export default function LiveStage({
   children,
   actionRail,
   chatOverlay,
+  streamNav,
   className = "",
 }: LiveStageProps) {
   return (
@@ -51,6 +53,7 @@ export default function LiveStage({
           ) : null}
 
           {chatOverlay}
+          {streamNav}
 
           <div className="flex h-full items-center justify-center text-center">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,rgba(255,44,122,0.2),transparent_60%)]" />
