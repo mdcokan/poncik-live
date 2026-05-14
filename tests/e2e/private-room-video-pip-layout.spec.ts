@@ -31,8 +31,9 @@ test("private room stage pip keeps aspect ratio and compact controls", async ({ 
   test.setTimeout(420_000);
   await normalizeTestFixtures(request);
 
-  const streamerContext = await browser.newContext();
-  const memberContext = await browser.newContext();
+  const mobileViewport = { width: 430, height: 932 };
+  const streamerContext = await browser.newContext({ viewport: mobileViewport });
+  const memberContext = await browser.newContext({ viewport: mobileViewport });
   await memberContext.grantPermissions(["camera", "microphone"]);
   const streamerPage = await streamerContext.newPage();
   const memberPage = await memberContext.newPage();
@@ -68,7 +69,10 @@ test("private room stage pip keeps aspect ratio and compact controls", async ({ 
       testInfo,
     );
     await memberPage.goto(`/rooms/${roomId}`);
-    await expect(memberPage.getByTestId("private-room-request-button")).toBeEnabled({ timeout: 60_000 });
+    await expect(
+      memberPage.getByTestId("room-mobile-shell").or(memberPage.getByTestId("room-live-stage")).first(),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(memberPage.getByTestId("private-room-request-button")).toBeVisible({ timeout: 30_000 });
     await memberPage.getByTestId("private-room-request-button").click();
 
     await expect(streamerPage.getByTestId("studio-private-request-accept-button").first()).toBeVisible({ timeout: 30_000 });
@@ -100,7 +104,8 @@ test("private room stage pip keeps aspect ratio and compact controls", async ({ 
     }
 
     await expect(memberPage.getByTestId("room-live-stage")).toBeVisible();
-    await expect(memberPage.getByTestId("room-right-panel")).toBeVisible();
+    await expect(memberPage.getByTestId("room-right-panel")).toBeHidden();
+    await expect(memberPage.getByTestId("room-mobile-action-rail")).toBeVisible();
 
     const overflow = await memberPage.evaluate(() => {
       const root = document.documentElement;
